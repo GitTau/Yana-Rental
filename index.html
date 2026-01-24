@@ -1,0 +1,92 @@
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>YANA Ops CRM</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@300;400;500;600;700;800;900&display=swap');
+      
+      :root {
+        --brand-cyan: #00eaff;
+      }
+
+      body {
+        font-family: 'Nunito', sans-serif;
+        background-color: #f8fafc;
+        color: #0f172a;
+        -webkit-tap-highlight-color: transparent;
+      }
+
+      .cyan-accent {
+        color: var(--brand-cyan);
+      }
+
+      .bg-cyan-brand {
+        background-color: var(--brand-cyan);
+      }
+
+      .border-cyan-brand {
+        border-color: var(--brand-cyan);
+      }
+
+      .light-glass {
+        background: rgba(255, 255, 255, 0.85);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border: 1px solid rgba(226, 232, 240, 0.8);
+      }
+
+      .btn-primary {
+        background-color: var(--brand-cyan);
+        color: #000000;
+        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        font-weight: 700;
+      }
+
+      .btn-primary:active {
+        transform: scale(0.96);
+      }
+
+      .active-nav {
+        background-color: rgba(0, 234, 255, 0.1);
+        color: #0891b2;
+        border-right: 4px solid var(--brand-cyan);
+      }
+
+      .transition-standard {
+        transition: all 0.25s ease-in-out;
+      }
+
+      .scrollbar-hide::-webkit-scrollbar {
+        display: none;
+      }
+      .scrollbar-hide {
+        -ms-overflow-style: none;
+        scrollbar-width: none;
+      }
+
+      /* Better table scrolling on mobile */
+      .table-container {
+        width: 100%;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+    </style>
+  <script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@^19.2.3",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "react/": "https://esm.sh/react@^19.2.3/",
+    "lucide-react": "https://esm.sh/lucide-react@^0.562.0"
+  }
+}
+</script>
+</head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
