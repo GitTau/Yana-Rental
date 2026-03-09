@@ -45,7 +45,6 @@ const Layout: React.FC<LayoutProps> = ({
 }) => {
   const activeStore = activeStoreId === 'all' ? { name: 'Global Fleet', location: 'System Wide', state: 'Multiple' } : stores.find(s => s.id === activeStoreId);
   const isAdmin = currentRole === UserRole.ADMIN;
-  const isRider = currentRole === UserRole.RIDER;
 
   const adminNavItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -53,7 +52,7 @@ const Layout: React.FC<LayoutProps> = ({
     { id: 'fleet', label: 'Fleet Ops', icon: Truck },
     { id: 'batteries', label: 'Batteries', icon: BatteryIcon },
     { id: 'financials', label: 'Settlements', icon: Wallet },
-    { id: 'customers', label: 'Rider CRM', icon: Users },
+    { id: 'customers', label: 'Rider Registry', icon: Users },
     { id: 'maintenance', label: 'Service', icon: Wrench },
     { id: 'logs', label: 'Audit Trail', icon: History },
     { id: 'admin', label: 'Terminal Config', icon: Settings },
@@ -116,7 +115,7 @@ const Layout: React.FC<LayoutProps> = ({
                 {activeStoreId === 'all' ? <Globe size={14} className="text-[#00eaff]" /> : <StoreIcon size={14} className="text-[#00eaff]" />}
                 <div className="text-left leading-none max-w-[80px] lg:max-w-none truncate">
                   <p className="hidden lg:block text-[9px] text-slate-400 font-black uppercase tracking-tighter mb-0.5">Zap Point</p>
-                  <p className="text-[10px] lg:text-xs font-black text-slate-900 truncate">{activeStore?.name}</p>
+                  <p className="text-[10px] lg:text-xs font-black text-slate-900 truncate">{activeStore?.name || 'Loading...'}</p>
                 </div>
                 <ChevronDown size={12} className="text-slate-400" />
               </button>
@@ -151,7 +150,7 @@ const Layout: React.FC<LayoutProps> = ({
               <button 
                 onClick={() => {
                   setCurrentRole(UserRole.OPERATOR);
-                  if (activeStoreId === 'all') onStoreSwitch(stores[0].id);
+                  if (activeStoreId === 'all' && stores.length > 0) onStoreSwitch(stores[0].id);
                 }}
                 className={`flex items-center space-x-1 lg:space-x-2 px-2 lg:px-5 py-1 lg:py-1.5 rounded-lg text-[9px] lg:text-[10px] font-black uppercase tracking-widest transition-standard ${
                   currentRole === UserRole.OPERATOR ? 'bg-white text-[#0891b2] shadow-sm' : 'text-slate-500 hover:text-slate-900'
@@ -172,7 +171,7 @@ const Layout: React.FC<LayoutProps> = ({
               <button 
                 onClick={() => {
                   setCurrentRole(UserRole.RIDER);
-                  if (activeStoreId === 'all') onStoreSwitch(stores[0].id);
+                  if (activeStoreId === 'all' && stores.length > 0) onStoreSwitch(stores[0].id);
                 }}
                 className={`flex items-center space-x-1 lg:space-x-2 px-2 lg:px-5 py-1 lg:py-1.5 rounded-lg text-[9px] lg:text-[10px] font-black uppercase tracking-widest transition-standard ${
                   currentRole === UserRole.RIDER ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-500 hover:text-slate-900'

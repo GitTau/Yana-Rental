@@ -1,3 +1,4 @@
+
 import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Smartphone, 
@@ -26,7 +27,9 @@ import {
   CalendarDays,
   HeartPulse,
   FileText,
-  CalendarCheck
+  CalendarCheck,
+  Landmark,
+  CreditCard
 } from 'lucide-react';
 import { 
   YanaState, 
@@ -231,11 +234,11 @@ const RiderPortal: React.FC<RiderPortalProps> = ({ state, onBook, onOnboard }) =
               onClick={() => setIsSwitchingRider(true)}
               className="w-10 h-10 bg-[#00eaff] rounded-full border-2 border-white shadow-md flex items-center justify-center font-black text-black text-xs cursor-pointer active:scale-95 transition-all overflow-hidden"
             >
-              {currentRider.name.charAt(0)}
+              {(currentRider.name || '?').charAt(0)}
             </div>
             <div>
                <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none mb-1">Welcome back,</p>
-               <h3 className="font-black text-gray-900 leading-none truncate max-w-[120px]">{currentRider.name.split(' ')[0]}</h3>
+               <h3 className="font-black text-gray-900 leading-none truncate max-w-[120px]">{(currentRider.name || '').split(' ')[0]}</h3>
             </div>
          </div>
          <div className="flex gap-2">
@@ -372,7 +375,7 @@ const RiderPortal: React.FC<RiderPortalProps> = ({ state, onBook, onOnboard }) =
            <div className="space-y-6">
               <div className="text-center py-8">
                  <div className="w-24 h-24 bg-gray-100 rounded-3xl mx-auto border-4 border-white shadow-xl flex items-center justify-center text-4xl font-black text-gray-400 mb-4 uppercase">
-                    {currentRider.name.substring(0, 2)}
+                    {(currentRider.name || '??').substring(0, 2)}
                  </div>
                  <h2 className="text-2xl font-black text-gray-900">{currentRider.name}</h2>
                  <div className="flex items-center justify-center gap-2 mt-1">
@@ -382,6 +385,26 @@ const RiderPortal: React.FC<RiderPortalProps> = ({ state, onBook, onOnboard }) =
                        <Badge variant="error" className="rounded-lg">KYC PENDING</Badge>
                     )}
                  </div>
+              </div>
+
+              {/* Settlement Bank Card for Rider */}
+              <div className="px-1">
+                 <Card className="bg-slate-900 border-none shadow-xl overflow-hidden relative">
+                    <div className="relative z-10 p-1">
+                       <div className="flex items-center gap-2 mb-3">
+                          <Landmark size={14} className="text-[#00eaff]" />
+                          <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400">Settlement Destination</h4>
+                       </div>
+                       <div className="space-y-4">
+                          <div>
+                             <p className="text-[8px] font-black text-slate-500 uppercase">Account Number</p>
+                             <p className="text-sm font-black text-white">{currentRider.accountNumber || 'NOT CONFIGURED'}</p>
+                             <p className="text-[10px] text-[#00eaff] font-bold">{currentRider.bankName} • {currentRider.ifscCode}</p>
+                          </div>
+                       </div>
+                    </div>
+                    <CreditCard className="absolute -bottom-4 -right-4 text-white/5" size={100} />
+                 </Card>
               </div>
 
               <div className="grid grid-cols-1 gap-3">
@@ -512,7 +535,7 @@ const RiderPortal: React.FC<RiderPortalProps> = ({ state, onBook, onOnboard }) =
                   className={`p-4 rounded-2xl border-2 transition-all cursor-pointer flex items-center justify-between ${currentRiderId === cust.id ? 'border-[#00eaff] bg-[#00eaff]/5' : 'border-gray-50 bg-gray-50 hover:border-gray-200'}`}
                >
                   <div className="flex items-center gap-3">
-                     <div className="w-8 h-8 bg-white rounded-full flex items-center justify-center font-black text-[10px] shadow-sm">{cust.name.charAt(0)}</div>
+                     <div className="w-8 h-8 bg-white rounded-full flex items-center justify-center font-black text-[10px] shadow-sm">{(cust.name || '?').charAt(0)}</div>
                      <div>
                         <p className="text-xs font-black text-gray-900 leading-none">{cust.name}</p>
                         <p className="text-[9px] font-bold text-gray-400 mt-1">{cust.phone}</p>

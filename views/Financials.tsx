@@ -1,3 +1,4 @@
+
 import React, { useState, useMemo } from 'react';
 import { 
   Wallet, 
@@ -19,7 +20,8 @@ import {
   Smartphone,
   ShieldCheck,
   Tag,
-  Receipt
+  Receipt,
+  Timer
 } from 'lucide-react';
 import { YanaState, Booking, BookingStatus, RentalPlan } from '../types';
 import { Card, Badge, Modal } from '../components/Common';
@@ -43,6 +45,8 @@ const CHECKLIST_PRICES: Record<string, { label: string, fine: number }> = {
   'dead': { label: 'Dead', fine: 1000 },
 };
 
+const DAILY_EXTENSION_FINE = 300;
+
 interface FinancialsProps {
   state: YanaState;
   onRecordPayment: (id: string, amount: number) => void;
@@ -64,17 +68,29 @@ const Financials: React.FC<FinancialsProps> = ({ state, onRecordPayment, onMarkS
     const depositAmount = Number(booking.depositAmount || 0);
     const finesAmount = Number(booking.finesAmount || 0);
     
-    const totalDue = totalAmount + depositAmount + finesAmount;
+    // CALCULATE DYNAMIC OVERDUE FINES (₹300/day)
+    const now = Date.now();
+    let extensionFines = 0;
+    let overdueDays = 0;
+    if (booking.status !== BookingStatus.COMPLETED && booking.expectedEndDate && now > booking.expectedEndDate) {
+      overdueDays = Math.ceil((now - booking.expectedEndDate) / (1000 * 60 * 60 * 24));
+      // 1 day grace period
+      extensionFines = overdueDays > 1 ? overdueDays * DAILY_EXTENSION_FINE : 0;
+    } else if (booking.status === BookingStatus.COMPLETED && booking.completedAt && booking.expectedEndDate && booking.completedAt > booking.expectedEndDate) {
+      // For completed rides, calculate based on actual return time
+      overdueDays = Math.ceil((booking.completedAt - booking.expectedEndDate) / (1000 * 60 * 60 * 24));
+      // 1 day grace period
+      extensionFines = overdueDays > 1 ? overdueDays * DAILY_EXTENSION_FINE : 0;
+    }
+    
+    const totalDue = totalAmount + depositAmount + finesAmount + extensionFines;
     const paid = Number(booking.amountPaid || 0);
     const balance = totalDue - paid;
     
-    // Logic: Collections are for DRAFT/ACTIVE rides with balance > 0
     const isPendingCollection = balance > 0 && !booking.isSettled && booking.status !== BookingStatus.COMPLETED;
-    
-    // Logic: Clearance Tickets are ANY COMPLETED RIDE not yet settled
     const isClearanceTicket = booking.status === BookingStatus.COMPLETED && !booking.isSettled;
     
-    return { totalDue, paid, balance, isPendingCollection, isClearanceTicket, depositAmount, finesAmount };
+    return { totalDue, paid, balance, isPendingCollection, isClearanceTicket, depositAmount, finesAmount, extensionFines, overdueDays };
   };
 
   const collections = filteredBookings.filter(b => getPaymentStatus(b).isPendingCollection);
@@ -135,9 +151,16 @@ const Financials: React.FC<FinancialsProps> = ({ state, onRecordPayment, onMarkS
                       </div>
                       <div>
                         <p className="font-black text-gray-900 leading-tight group-hover:text-blue-600 transition-colors">{cust?.name}</p>
-                        <p className="text-[10px] text-gray-400 font-bold uppercase mt-1 flex items-center gap-1">
-                          <Globe size={10} /> {store?.name}
-                        </p>
+                        <div className="flex items-center gap-2 mt-1">
+                           <p className="text-[10px] text-gray-400 font-bold uppercase flex items-center gap-1">
+                             <Globe size={10} /> {store?.name.split(' ')[2]}
+                           </p>
+                           {status.overdueDays > 0 && (
+                             <span className={`text-[8px] font-black ${status.extensionFines > 0 ? 'text-rose-600 bg-rose-50' : 'text-amber-600 bg-amber-50'} uppercase flex items-center gap-0.5 px-1.5 rounded-full`}>
+                               <Timer size={8}/> {status.extensionFines > 0 ? `${status.overdueDays}d Late` : 'Grace Period'}
+                             </span>
+                           )}
+                        </div>
                       </div>
                    </div>
                    <div className="text-right flex items-center gap-6">
@@ -169,9 +192,7 @@ const Financials: React.FC<FinancialsProps> = ({ state, onRecordPayment, onMarkS
             {clearanceTickets.map(b => {
               const cust = state.customers.find(c => c.id === b.customerId);
               const status = getPaymentStatus(b);
-              // Calculate refund: Initial Deposit - Fines. 
-              // If they already paid rent+deposit, the remaining amount to refund is (deposit - fines).
-              const refundDue = status.depositAmount - status.finesAmount;
+              const refundDue = status.depositAmount - status.finesAmount - status.extensionFines;
               
               return (
                 <div key={b.id} className="bg-white p-5 rounded-2xl border-2 border-dashed border-[#0891b2]/30 flex items-center justify-between group hover:border-[#0891b2] hover:bg-[#0891b2]/5 transition-all cursor-pointer shadow-sm" onClick={() => setDetailBookingId(b.id)}>
@@ -181,9 +202,12 @@ const Financials: React.FC<FinancialsProps> = ({ state, onRecordPayment, onMarkS
                       </div>
                       <div>
                         <p className="font-black text-gray-900 leading-tight">{cust?.name}</p>
-                        <p className="text-[9px] text-[#0891b2] font-black uppercase mt-1 flex items-center gap-1 bg-cyan-100/50 px-1.5 py-0.5 rounded w-fit">
-                           <Clock size={10} /> Returned {formatDate(b.completedAt).split(',')[0]}
-                        </p>
+                        <div className="flex items-center gap-2 mt-1">
+                           <p className="text-[9px] text-[#0891b2] font-black uppercase flex items-center gap-1 bg-cyan-100/50 px-1.5 py-0.5 rounded w-fit">
+                              <Clock size={10} /> Returned {formatDate(b.completedAt).split(',')[0]}
+                           </p>
+                           {status.extensionFines > 0 && <span className="text-[8px] font-black text-rose-500 uppercase bg-rose-50 px-1.5 py-0.5 rounded">Ext. Penalized</span>}
+                        </div>
                       </div>
                    </div>
                    <div className="text-right flex items-center gap-6">
@@ -216,7 +240,7 @@ const Financials: React.FC<FinancialsProps> = ({ state, onRecordPayment, onMarkS
           const cust = state.customers.find(c => c.id === selectedBooking.customerId);
           const stats = getPaymentStatus(selectedBooking);
           const logs = state.logs.filter(l => l.message.includes(selectedBooking.id));
-          const refundDue = stats.depositAmount - stats.finesAmount;
+          const refundDue = stats.depositAmount - stats.finesAmount - stats.extensionFines;
 
           return (
             <div className="space-y-6 max-h-[80vh] overflow-y-auto pr-2 scrollbar-hide">
@@ -240,51 +264,41 @@ const Financials: React.FC<FinancialsProps> = ({ state, onRecordPayment, onMarkS
                           <span className="text-gray-500 font-medium">Initial Security Deposit</span>
                           <span className="font-black text-slate-900">₹{stats.depositAmount}</span>
                         </div>
-                        {selectedBooking.checklist && selectedBooking.checklist.length > 0 && (
-                           <div className="pt-2 mt-2 border-t border-gray-100 space-y-2">
-                              {selectedBooking.checklist.map((label, idx) => (
+                        <div className="pt-2 mt-2 border-t border-gray-100 space-y-2">
+                           {stats.overdueDays === 1 && stats.extensionFines === 0 && (
+                             <div className="flex justify-between text-[10px]">
+                                <span className="text-amber-600 font-bold flex items-center gap-1 uppercase tracking-tighter"><Timer size={10}/> Grace Period (1d)</span>
+                                <span className="text-amber-600 font-black">₹0</span>
+                             </div>
+                           )}
+                           {stats.extensionFines > 0 && (
+                             <div className="flex justify-between text-[10px]">
+                                <span className="text-amber-600 font-bold flex items-center gap-1 uppercase tracking-tighter"><Timer size={10}/> Extension Penalty ({stats.overdueDays}d)</span>
+                                <span className="text-amber-600 font-black">₹{stats.extensionFines}</span>
+                             </div>
+                           )}
+                           {selectedBooking.checklist && selectedBooking.checklist.length > 0 && (
+                              selectedBooking.checklist.map((label, idx) => (
                                 <div key={idx} className="flex justify-between text-[10px]">
                                    <span className="text-rose-600 font-bold flex items-center gap-1"><AlertTriangle size={10}/> {label}</span>
                                    <span className="text-rose-600 font-black">₹{Object.values(CHECKLIST_PRICES).find(p => p.label === label)?.fine || 0}</span>
                                 </div>
-                              ))}
-                           </div>
-                        )}
+                              ))
+                           )}
+                        </div>
                         <div className="pt-2 mt-2 border-t border-gray-100 flex justify-between items-center">
-                           <span className="text-xs font-black text-[#0891b2] uppercase">Deposit Balance</span>
+                           <span className="text-xs font-black text-[#0891b2] uppercase">Net Clear Balance</span>
                            <span className="text-xl font-black text-[#0891b2]">₹{refundDue}</span>
                         </div>
                      </div>
                      <div className="bg-slate-900 p-5 flex justify-between items-center text-white">
-                        <span className="text-xs font-bold uppercase tracking-widest">Action Outcome</span>
+                        <span className="text-xs font-bold uppercase tracking-widest">Final Ledger Action</span>
                         <div className="text-right">
                            <p className="text-lg font-black uppercase tracking-tight">
-                              {refundDue >= 0 ? `Process Refund` : `Collect Additional`}
+                              {refundDue >= 0 ? `Process Refund` : `Collect Balance`}
                            </p>
-                           <p className="text-[8px] opacity-60 uppercase font-black tracking-tighter">Settlement Status: {selectedBooking.isSettled ? 'FULLY SETTLED' : 'ACTION PENDING'}</p>
                         </div>
                      </div>
-                  </div>
-               </div>
-
-               <div className="space-y-3">
-                  <h5 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2">
-                    <History size={14} /> Audit Trail
-                  </h5>
-                  <div className="space-y-2">
-                    {logs.length > 0 ? logs.map(log => (
-                      <div key={log.id} className="p-3 bg-white border border-gray-100 rounded-xl flex justify-between items-start group">
-                        <div className="flex gap-3">
-                           <div className="mt-1 w-1.5 h-1.5 rounded-full bg-blue-400" />
-                           <div>
-                              <p className="text-xs font-bold text-gray-800 leading-tight">{log.message}</p>
-                              <p className="text-[9px] text-gray-400 mt-0.5">{formatDate(log.timestamp)}</p>
-                           </div>
-                        </div>
-                      </div>
-                    )) : (
-                      <p className="text-[10px] text-gray-400 italic text-center py-4">No detailed logs for this account.</p>
-                    )}
                   </div>
                </div>
 
@@ -294,70 +308,13 @@ const Financials: React.FC<FinancialsProps> = ({ state, onRecordPayment, onMarkS
                       onClick={() => { onMarkSettled(selectedBooking.id); setDetailBookingId(null); }}
                       className="flex-1 py-4 bg-emerald-600 text-white rounded-2xl text-sm font-black flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20 active:scale-95 transition-all"
                     >
-                      <CheckCircle size={20} /> Close & Settle Ticket
+                      <CheckCircle size={20} /> Close & Settle Ledger
                     </button>
                  </div>
                )}
             </div>
           );
         })()}
-      </Modal>
-
-      <Modal 
-        isOpen={!!paymentBookingId} 
-        onClose={() => setPaymentBookingId(null)} 
-        title="Record Manual Collection" 
-        confirmLabel="Confirm Entry" 
-        onConfirm={() => { 
-          if (paymentBookingId && (parseFloat(paymentCash) || parseFloat(paymentOnline))) { 
-            onRecordPayment(paymentBookingId, totalPaymentEntered); 
-            setPaymentBookingId(null); 
-          } 
-        }}
-      >
-        <div className="space-y-4">
-           {paymentBookingId && (() => {
-             const b = state.bookings.find(x => x.id === paymentBookingId);
-             const s = b ? getPaymentStatus(b) : null;
-             return (
-               <div className="p-4 bg-blue-50 border border-blue-100 rounded-2xl">
-                 <p className="text-[10px] font-bold text-blue-400 uppercase tracking-widest mb-1">Total Outstanding</p>
-                 <p className="text-2xl font-black text-blue-900">₹{s?.balance}</p>
-               </div>
-             );
-           })()}
-           <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-1.5 ml-1">
-                  <Banknote size={10} /> Cash (₹)
-                </label>
-                <input 
-                  type="number" 
-                  autoFocus 
-                  className="w-full p-4 bg-gray-50 border border-gray-200 rounded-2xl text-xl font-black outline-none focus:ring-2 focus:ring-blue-500/20" 
-                  value={paymentCash} 
-                  onChange={e => setPaymentCash(e.target.value)} 
-                  placeholder="0" 
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-1.5 ml-1">
-                  <Smartphone size={10} /> Online (₹)
-                </label>
-                <input 
-                  type="number" 
-                  className="w-full p-4 bg-gray-50 border border-gray-200 rounded-2xl text-xl font-black outline-none focus:ring-2 focus:ring-blue-500/20" 
-                  value={paymentOnline} 
-                  onChange={e => setPaymentOnline(e.target.value)} 
-                  placeholder="0" 
-                />
-              </div>
-           </div>
-           <div className="pt-2 flex justify-between items-center px-1">
-              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total Entry</span>
-              <span className="text-xl font-black text-emerald-600">₹{totalPaymentEntered}</span>
-           </div>
-        </div>
       </Modal>
     </div>
   );

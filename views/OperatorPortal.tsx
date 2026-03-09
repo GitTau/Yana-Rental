@@ -1,3 +1,4 @@
+
 import React, { useState, useMemo } from 'react';
 import { 
   BookOpen, 
@@ -42,7 +43,8 @@ import {
   Activity,
   ShieldCheck,
   UserCheck,
-  TicketCheck
+  TicketCheck,
+  Timer
 } from 'lucide-react';
 import { 
   YanaState, 
@@ -76,11 +78,13 @@ const CHECKLIST_ITEMS = [
   { id: 'dead', label: 'Dead', fine: 1000 },
 ];
 
+const DAILY_EXTENSION_FINE = 300;
+
 interface OperatorPortalProps {
   state: YanaState;
   userRole: UserRole;
-  onStart: (id: string) => void;
-  onPause: (id: string, reason: string) => void;
+  onStart: (id: string, newVehId?: string, newBatId?: string) => void;
+  onPause: (id: string, reason: string, fines: number, checklist: string[]) => void;
   onComplete: (id: string, notes: string, fines: number, checklist: string[]) => void;
   onCreateBooking: (custId: string, vehId: string, batId: string, plan: RentalPlan, startDate: number) => void;
   onOnboardCustomer: (c: Omit<Customer, 'id' | 'storeId'>) => void;
@@ -99,6 +103,7 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
   // Modals & Forms
   const [isCreating, setIsCreating] = useState(false);
   const [isOnboarding, setIsOnboarding] = useState(false);
+  const [isResumingId, setIsResumingId] = useState<string | null>(null);
   
   const [paymentBookingId, setPaymentBookingId] = useState<string | null>(null);
   const [paymentCash, setPaymentCash] = useState<string>('');
@@ -108,7 +113,7 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
   const [fleetDetailView, setFleetDetailView] = useState<'vehicles' | 'batteries' | 'available' | 'inactive' | null>(null);
 
   const [isChecklistOpen, setIsChecklistOpen] = useState(false);
-  const [checklistTarget, setChecklistTarget] = useState<{ id: string, type: 'return' } | null>(null);
+  const [checklistTarget, setChecklistTarget] = useState<{ id: string, type: 'return' | 'pause' } | null>(null);
   const [selectedChecklistIds, setSelectedChecklistIds] = useState<Set<string>>(new Set());
 
   const [settlementPromptBookingId, setSettlementPromptBookingId] = useState<string | null>(null);
@@ -144,9 +149,10 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
 
   const calculatedEndDate = useMemo(() => {
     if (!selectedStartDate) return null;
-    const start = new Date(selectedStartDate).getTime();
+    const start = new Date(selectedStartDate);
+    start.setHours(0, 0, 0, 0);
     const durationDays = selectedPlan === RentalPlan.WEEKLY ? 7 : 30;
-    return start + (durationDays * 24 * 60 * 60 * 1000);
+    return start.getTime() + (durationDays * 24 * 60 * 60 * 1000);
   }, [selectedStartDate, selectedPlan]);
 
   const priceBreakup = useMemo(() => {
@@ -187,8 +193,18 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
     const depositAmount = Number(booking.depositAmount || 0);
     const finesAmount = Number(booking.finesAmount || 0);
     
+    // CALCULATE DYNAMIC OVERDUE FINES (₹300/day)
+    const now = Date.now();
+    let extensionFines = 0;
+    let overdueDays = 0;
+    if (booking.status !== BookingStatus.COMPLETED && booking.expectedEndDate && now > booking.expectedEndDate) {
+      overdueDays = Math.ceil((now - booking.expectedEndDate) / (1000 * 60 * 60 * 24));
+      // 1 day grace period
+      extensionFines = overdueDays > 1 ? overdueDays * DAILY_EXTENSION_FINE : 0;
+    }
+    
     const baseDue = totalAmount + depositAmount;
-    const totalDue = baseDue + finesAmount;
+    const totalDue = baseDue + finesAmount + extensionFines;
     const paid = Number(booking.amountPaid || 0);
     const balance = totalDue - paid;
     
@@ -196,10 +212,17 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
     const isPendingRefund = (booking.status === BookingStatus.COMPLETED || booking.status === BookingStatus.ACTIVE) && balance < 0 && !booking.isSettled;
     
     const isWeekly = booking.rentalPlan === RentalPlan.WEEKLY;
-    const minToStart = isWeekly ? baseDue : baseDue / 2;
+    const thresholdRatio = isWeekly ? 1.0 : 0.5;
+    const minToStart = totalDue * thresholdRatio;
     const canStart = paid >= minToStart;
+    const coveragePct = totalDue > 0 ? (paid / totalDue) * 100 : 0;
 
-    return { totalDue, paid, balance, canStart, minToStart, isPendingCollection, isPendingRefund, totalAmount, depositAmount, finesAmount };
+    return { 
+      totalDue, paid, balance, canStart, minToStart, 
+      isPendingCollection, isPendingRefund, totalAmount, 
+      depositAmount, finesAmount, extensionFines, overdueDays,
+      coveragePct, thresholdRatio 
+    };
   };
 
   const customerHasUncleared = (customerId: string) => {
@@ -211,7 +234,6 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
 
   const filteredRentals = storeBookings.filter(b => {
     if (rentalSubTab === 'live') {
-      // In 'live' board, we show Draft, Active, Paused AND Completed rides that aren't settled yet
       if (![BookingStatus.ACTIVE, BookingStatus.DRAFT, BookingStatus.PAUSED].includes(b.status) && b.isSettled) return false;
     }
     
@@ -220,7 +242,7 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
     const customer = state.customers.find(c => c.id === b.customerId);
     const vehicle = state.vehicles.find(v => v.id === b.vehicleId);
     const battery = state.batteries.find(bat => bat.id === b.batteryId);
-    return customer?.name.toLowerCase().includes(query) || customer?.phone.includes(query) || vehicle?.plateNumber.toLowerCase().includes(query) || battery?.serialNumber.toLowerCase().includes(query);
+    return (customer?.name || '').toLowerCase().includes(query) || (customer?.phone || '').includes(query) || (vehicle?.plateNumber || '').toLowerCase().includes(query) || (battery?.serialNumber || '').toLowerCase().includes(query);
   });
 
   const handleSwapConfirm = () => {
@@ -264,14 +286,32 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
     const checklistLog = Array.from(selectedChecklistIds).map(id => CHECKLIST_ITEMS.find(item => item.id === id)?.label || '');
     const bookingId = checklistTarget.id;
     
-    onComplete(bookingId, 'Inspection Complete', totalFine, checklistLog);
+    if (checklistTarget.type === 'pause') {
+      onPause(bookingId, 'Operator Pause (Delink)', totalFine, checklistLog);
+    } else {
+      onComplete(bookingId, 'Inspection Complete', totalFine, checklistLog);
+    }
+
     setIsChecklistOpen(false);
     setChecklistTarget(null);
     
-    if (isAdmin) {
-      setSettlementPromptBookingId(bookingId);
+    if (checklistTarget.type === 'return') {
+      if (isAdmin) {
+        setSettlementPromptBookingId(bookingId);
+      } else {
+        setShowOperatorReturnSuccess(true);
+      }
+    }
+  };
+
+  const handleResumeBooking = () => {
+    if (isResumingId && selectedVehId && selectedBatteryId) {
+      onStart(isResumingId, selectedVehId, selectedBatteryId);
+      setIsResumingId(null);
+      setSelectedVehId('');
+      setSelectedBatteryId('');
     } else {
-      setShowOperatorReturnSuccess(true);
+      alert("Please select both a scooter and a battery to resume the ride.");
     }
   };
 
@@ -299,7 +339,10 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
 
   const handleCreateBooking = () => {
     if (selectedCustId && selectedVehId && selectedBatteryId && selectedStartDate) { 
-      onCreateBooking(selectedCustId, selectedVehId, selectedBatteryId, selectedPlan, new Date(selectedStartDate).getTime()); 
+      const anchorDate = new Date(selectedStartDate);
+      anchorDate.setHours(0, 0, 0, 0);
+      
+      onCreateBooking(selectedCustId, selectedVehId, selectedBatteryId, selectedPlan, anchorDate.getTime()); 
       setIsCreating(false); 
       setSelectedCustId('');
       setSelectedVehId('');
@@ -322,12 +365,13 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
       [BookingStatus.ACTIVE, BookingStatus.PAUSED].includes(b.status) && 
       b.expectedEndDate && b.expectedEndDate < now
     );
-    const totalOverdueDays = overdueBookings.reduce((sum, b) => {
+    const totalOverdueDaysForFine = overdueBookings.reduce((sum, b) => {
       const diff = now - (b.expectedEndDate || now);
-      return sum + Math.ceil(diff / (1000 * 60 * 60 * 24));
+      const days = Math.ceil(diff / (1000 * 60 * 60 * 24));
+      return sum + (days > 1 ? days : 0);
     }, 0);
 
-    return { totalBookings, idleVehicles, vehiclesOnRent, target, pendingPaymentsCount, overdueCount: overdueBookings.length, totalOverdueDays };
+    return { totalBookings, idleVehicles, vehiclesOnRent, target, pendingPaymentsCount, overdueCount: overdueBookings.length, totalOverdueDays: totalOverdueDaysForFine };
   }, [storeBookings, storeVehicles, state.activeStoreId, state.stores]);
 
   return (
@@ -358,7 +402,7 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
             <div className="px-1 flex justify-between items-center">
                <div>
                   <h2 className="text-xl lg:text-2xl font-black text-gray-900 tracking-tight">Ops Center</h2>
-                  <p className="text-gray-500 text-[10px] lg:text-sm font-bold uppercase tracking-widest">Zap Point Performance Overview</p>
+                  <p className="text-gray-500 text-[10px] lg:text-sm font-bold uppercase tracking-widest mt-0.5">Zap Point Performance Overview</p>
                </div>
                <div className="bg-white border border-slate-200 px-4 py-2 rounded-xl flex items-center gap-2">
                   <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
@@ -434,8 +478,8 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
                      </div>
                      {overviewStats.overdueCount > 0 && (
                        <div className="flex items-center gap-1.5 mt-2 bg-rose-600/10 px-2 py-1 rounded-lg w-fit">
-                          <BarChart3 size={12} className="text-rose-600" />
-                          <span className="text-[9px] font-black text-rose-700 uppercase">Impact: {overviewStats.totalOverdueDays} Days</span>
+                          <IndianRupee size={12} className="text-rose-600" />
+                          <span className="text-[9px] font-black text-rose-700 uppercase">Impact: ₹{overviewStats.totalOverdueDays * 300} Penalties</span>
                        </div>
                      )}
                   </div>
@@ -480,14 +524,16 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
                     const isExpanded = expandedBilling[booking.id];
                     const hasFlag = customerHasUncleared(booking.customerId);
                     const isReturned = booking.status === BookingStatus.COMPLETED && !booking.isSettled;
+                    const isWeekly = booking.rentalPlan === RentalPlan.WEEKLY;
                     
+                    const isPastDue = pay.overdueDays > 0;
                     const now = Date.now();
-                    const isPastDue = booking.expectedEndDate && booking.expectedEndDate < now && booking.status !== BookingStatus.COMPLETED;
-                    const isNearDue = booking.expectedEndDate && (booking.expectedEndDate - now) < (24 * 60 * 60 * 1000) && booking.status !== BookingStatus.COMPLETED;
-                    const overdueDays = isPastDue ? Math.ceil((now - (booking.expectedEndDate || now)) / (1000 * 60 * 60 * 24)) : 0;
+                    const isNearDue = booking.expectedEndDate && (booking.expectedEndDate - now) < (24 * 60 * 60 * 1000) && !isPastDue && booking.status !== BookingStatus.COMPLETED;
+
+                    const belowThreshold = !pay.canStart;
 
                     return (
-                      <Card key={booking.id} className={`relative border flex flex-col h-full hover:border-[#00eaff]/30 transition-all ${isReturned ? 'border-[#0891b2]/40 bg-[#0891b2]/5 shadow-inner' : isPastDue ? 'border-rose-300 shadow-rose-100 shadow-lg' : 'border-gray-200'}`}>
+                      <Card key={booking.id} className={`relative border flex flex-col h-full hover:border-[#00eaff]/30 transition-all ${isReturned ? 'border-[#0891b2]/40 bg-[#0891b2]/5 shadow-inner' : isPastDue ? 'border-rose-300 shadow-rose-100 shadow-lg' : belowThreshold ? 'border-amber-300 bg-amber-50/20' : 'border-gray-200'}`}>
                         <div className="absolute top-3 right-3 flex flex-col items-end gap-1.5">
                           <Badge variant={getBookingVariant(booking.status, booking.isSettled)}>
                              {isReturned ? 'Pending Settlement' : booking.status}
@@ -500,7 +546,7 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
                         </div>
                         
                         <div className="flex items-center space-x-3 mb-4">
-                          <div className={`w-9 h-9 ${isReturned ? 'bg-[#0891b2] text-white' : 'bg-blue-100 text-blue-700'} rounded-full flex items-center justify-center font-bold text-xs shrink-0`}>{customer?.name.charAt(0)}</div>
+                          <div className={`w-9 h-9 ${isReturned ? 'bg-[#0891b2] text-white' : 'bg-blue-100 text-blue-700'} rounded-full flex items-center justify-center font-bold text-xs shrink-0`}>{(customer?.name || '?').charAt(0)}</div>
                           <div className="overflow-hidden pr-12">
                             <p className="font-bold text-gray-900 text-sm truncate leading-tight">{customer?.name}</p>
                             <p className="text-[10px] font-bold text-gray-400 tracking-tight">{customer?.phone}</p>
@@ -509,9 +555,42 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
 
                         <div className="space-y-2 flex-1">
                           <div className="flex justify-between text-[10px] font-black text-gray-400 uppercase tracking-widest bg-slate-50 p-2.5 rounded-xl border border-gray-100">
-                            <div className="flex items-center space-x-1.5"><Truck size={10} /><span>{vehicle?.plateNumber}</span></div>
-                            <div className="flex items-center space-x-1.5 text-[#0891b2]"><Zap size={10} /><span>{state.batteries.find(b => b.id === booking.batteryId)?.serialNumber}</span></div>
+                            <div className="flex items-center space-x-1.5">
+                              <Truck size={10} />
+                              <span>{vehicle?.plateNumber || <span className="text-rose-400 italic">Unassigned</span>}</span>
+                            </div>
+                            <div className="flex items-center space-x-1.5 text-[#0891b2]">
+                              <Zap size={10} />
+                              <span>{state.batteries.find(b => b.id === booking.batteryId)?.serialNumber || <span className="text-rose-400 italic">Unassigned</span>}</span>
+                            </div>
                           </div>
+
+                          <div className="flex items-center gap-1 mb-1">
+                            <Badge variant="neutral" className="text-[7px] py-0">{booking.rentalPlan}</Badge>
+                            <span className="text-[8px] font-black text-slate-400 uppercase tracking-tighter">
+                              {isWeekly ? '100% Payment Gate' : '50% Payment Gate'}
+                            </span>
+                          </div>
+
+                          {belowThreshold && (booking.status === BookingStatus.DRAFT || booking.status === BookingStatus.PAUSED || isPastDue) && (
+                            <div className="p-2.5 rounded-xl border bg-amber-50 border-amber-200 flex flex-col gap-1 shadow-sm">
+                               <div className="flex items-center gap-1.5 text-amber-700">
+                                  <AlertTriangle size={14} className="animate-pulse" />
+                                  <span className="text-[9px] font-black uppercase tracking-tight">Revenue Protection Gate</span>
+                               </div>
+                               <p className="text-[10px] text-amber-800 font-bold leading-tight">
+                                 Paid: ₹{pay.paid} <br/> 
+                                 <span className="text-[9px] opacity-70">Need ₹{Math.ceil(pay.minToStart - pay.paid)} more to reach threshold</span>
+                               </p>
+                            </div>
+                          )}
+
+                          {booking.pauseReason && booking.status === BookingStatus.PAUSED && (
+                             <div className="p-2 bg-slate-100 border border-slate-200 rounded-lg">
+                                <p className="text-[8px] font-black text-slate-400 uppercase tracking-tighter mb-0.5">Pause Log (Assets Delinked)</p>
+                                <p className="text-[10px] text-slate-700 italic font-medium">"{booking.pauseReason}"</p>
+                             </div>
+                          )}
 
                           {!isReturned && (
                             <div className={`p-2.5 rounded-xl border flex flex-col gap-1 ${isPastDue ? 'bg-rose-50 border-rose-100' : isNearDue ? 'bg-amber-50 border-amber-100' : 'bg-slate-50 border-slate-100'}`}>
@@ -527,8 +606,13 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
                                   </span>
                               </div>
                               {isPastDue && (
-                                  <div className="bg-rose-600 text-white text-[8px] font-black px-1.5 py-0.5 rounded-md w-fit uppercase tracking-tighter">
-                                    {overdueDays} Days Overdue - Collect Fine
+                                  <div className="flex items-center justify-between mt-1">
+                                    <div className={`${pay.extensionFines > 0 ? 'bg-rose-600' : 'bg-amber-500'} text-white text-[8px] font-black px-1.5 py-0.5 rounded-md uppercase tracking-tighter`}>
+                                      {pay.extensionFines > 0 ? `${pay.overdueDays} Days Late` : 'Grace Period (1d)'}
+                                    </div>
+                                    <span className={`text-[9px] font-black ${pay.extensionFines > 0 ? 'text-rose-600' : 'text-amber-600'} uppercase tracking-tight flex items-center gap-1`}>
+                                      <Timer size={10}/> ₹{pay.extensionFines} Fine
+                                    </span>
                                   </div>
                               )}
                             </div>
@@ -546,22 +630,26 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
 
                           <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
                             <button onClick={() => toggleBilling(booking.id)} className="w-full p-2.5 flex justify-between items-center text-[9px] font-black uppercase tracking-widest hover:bg-slate-50">
-                                <div className="flex items-center gap-1.5"><ReceiptText size={10} className="text-slate-400" /><span>Billing & Breakup</span></div>
+                                <div className="flex items-center gap-1.5"><ReceiptText size={10} className="text-slate-400" /><span>Financial Health</span></div>
                                 <div className="flex items-center gap-1.5">
-                                  <span className={pay.balance > 0 ? "text-amber-600" : "text-emerald-600"}>₹{pay.paid} / ₹{pay.totalDue}</span>
+                                  <span className={pay.coveragePct < (pay.thresholdRatio * 100) ? "text-amber-600" : "text-emerald-600"}>Paid: {Math.round(pay.coveragePct)}%</span>
                                   {isExpanded ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
                                 </div>
                             </button>
                             {isExpanded && (
                               <div className="px-3 pb-3 space-y-1.5 border-t border-gray-50 pt-2 animate-in slide-in-from-top-1 duration-200">
-                                  <div className="flex justify-between text-[10px]"><span className="text-gray-400 font-bold">Rental ({booking.rentalPlan})</span><span className="text-gray-900 font-black">₹{pay.totalAmount}</span></div>
+                                  <div className="flex justify-between text-[10px]"><span className="text-gray-400 font-bold">Rental Plan</span><span className="text-gray-900 font-black">₹{pay.totalAmount}</span></div>
                                   <div className="flex justify-between text-[10px]"><span className="text-gray-400 font-bold">Security Deposit</span><span className="text-gray-900 font-black">₹{pay.depositAmount}</span></div>
-                                  {pay.finesAmount ? <div className="flex justify-between text-[10px]"><span className="text-rose-500 font-bold">Fines</span><span className="text-rose-600 font-black">₹{pay.finesAmount}</span></div> : null}
-                                  <div className="flex justify-between text-[10px] pt-1 border-t border-gray-100 font-black text-[#0891b2]"><span className="">Total Paid</span><span className="">₹{pay.paid}</span></div>
-                                  <div className="flex justify-between text-[10px] pt-1 border-t border-gray-100 font-black text-rose-600"><span className="">Outstanding</span><span className="">₹{pay.balance}</span></div>
+                                  {pay.finesAmount > 0 && <div className="flex justify-between text-[10px]"><span className="text-rose-500 font-bold">Damage Fines</span><span className="text-rose-600 font-black">₹{pay.finesAmount}</span></div>}
+                                  {pay.extensionFines > 0 && <div className="flex justify-between text-[10px]"><span className="text-amber-600 font-bold flex items-center gap-1"><Timer size={8}/> Late Extension</span><span className="text-amber-600 font-black">₹{pay.extensionFines}</span></div>}
+                                  <div className="flex justify-between text-[10px] pt-1 border-t border-gray-100 font-black text-[#0891b2]"><span className="">Total Collected</span><span className="">₹{pay.paid}</span></div>
+                                  <div className="flex justify-between text-[10px] pt-1 border-t border-gray-100 font-black text-rose-600"><span className="">Remaining Due</span><span className="">₹{pay.balance}</span></div>
                               </div>
                             )}
-                            <div className="h-1 w-full bg-slate-100"><div className={`h-full transition-all duration-500 ${pay.paid >= pay.minToStart ? 'bg-[#00eaff]' : 'bg-amber-400'}`} style={{ width: `${(pay.paid / pay.totalDue) * 100}%` }} /></div>
+                            <div className="h-1.5 w-full bg-slate-100 relative">
+                               <div className="absolute top-0 w-0.5 h-full bg-slate-400 z-10" style={{ left: `${pay.thresholdRatio * 100}%` }} title={`Dispatch Gate: ${pay.thresholdRatio * 100}%`} />
+                               <div className={`h-full transition-all duration-700 ${pay.coveragePct < (pay.thresholdRatio * 100) ? 'bg-amber-400' : 'bg-[#00eaff]'}`} style={{ width: `${pay.coveragePct}%` }} />
+                            </div>
                           </div>
                         </div>
 
@@ -569,17 +657,30 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
                           {booking.status === BookingStatus.DRAFT && (
                             <div className="flex gap-1.5">
                                 <button onClick={() => { setPaymentBookingId(booking.id); setPaymentCash(''); setPaymentOnline(''); }} className="flex-1 py-2 bg-slate-50 text-slate-700 border border-slate-200 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-100 active:scale-95 transition-all">Collect Cash</button>
-                                <button onClick={() => onStart(booking.id)} disabled={!pay.canStart} className={`flex-[1.5] py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${pay.canStart ? 'bg-[#00eaff] text-black shadow-sm' : 'bg-slate-100 text-slate-300'}`}>Dispatch Ride</button>
+                                <button onClick={() => onStart(booking.id)} className={`flex-[1.5] py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${pay.canStart ? 'bg-[#00eaff] text-black shadow-sm' : 'bg-slate-100 text-slate-300'}`}>
+                                  {pay.canStart ? 'Dispatch Ride' : `Locked (${Math.round(pay.thresholdRatio * 100)}%)`}
+                                </button>
                             </div>
                           )}
-                          {booking.status === BookingStatus.ACTIVE && (
+                          {(booking.status === BookingStatus.ACTIVE || booking.status === BookingStatus.PAUSED) && (
                             <div className="space-y-1.5">
-                              <div className="grid grid-cols-2 gap-1.5">
-                                <button onClick={() => { setSwapType('vehicle'); setSwapBookingId(booking.id); setSwapReason(''); setNewAssetId(''); setMoveToMaint(false); setSwapStep('select'); }} className="py-2 bg-slate-50 text-slate-500 border border-slate-100 rounded-lg text-[9px] font-black uppercase flex items-center justify-center gap-1 active:scale-95 transition-all"><RefreshCcw size={10} /> <span>Scooter</span></button>
-                                <button onClick={() => { setSwapType('battery'); setSwapBookingId(booking.id); setSwapReason(''); setNewAssetId(''); setMoveToMaint(false); setSwapStep('select'); }} className="py-2 bg-emerald-50 text-emerald-600 border border-emerald-100 rounded-lg text-[9px] font-black uppercase flex items-center justify-center gap-1 active:scale-95 transition-all"><RefreshCcw size={10} /> <span>Battery</span></button>
-                              </div>
+                              {booking.status === BookingStatus.ACTIVE && !isPastDue && (
+                                <div className="grid grid-cols-2 gap-1.5">
+                                  <button onClick={() => { setSwapType('vehicle'); setSwapBookingId(booking.id); setSwapReason(''); setNewAssetId(''); setMoveToMaint(false); setSwapStep('select'); }} className="py-2 bg-slate-50 text-slate-500 border border-slate-100 rounded-lg text-[9px] font-black uppercase flex items-center justify-center gap-1 active:scale-95 transition-all"><RefreshCcw size={10} /> <span>Scooter</span></button>
+                                  <button onClick={() => { setSwapType('battery'); setSwapBookingId(booking.id); setSwapReason(''); setNewAssetId(''); setMoveToMaint(false); setSwapStep('select'); }} className="py-2 bg-emerald-50 text-emerald-600 border border-emerald-100 rounded-lg text-[9px] font-black uppercase flex items-center justify-center gap-1 active:scale-95 transition-all"><RefreshCcw size={10} /> <span>Battery</span></button>
+                                </div>
+                              )}
                               <div className="flex space-x-1.5">
-                                  <button onClick={() => onPause(booking.id, 'Operator Pause')} className="flex-1 py-2.5 bg-amber-500 text-white rounded-xl text-[10px] font-black uppercase tracking-widest active:scale-95 transition-all">Pause</button>
+                                  {booking.status === BookingStatus.PAUSED || isPastDue ? (
+                                     <button onClick={() => { 
+                                       if(pay.canStart) setIsResumingId(booking.id);
+                                       else { setPaymentBookingId(booking.id); setPaymentCash(''); setPaymentOnline(''); }
+                                     }} className={`flex-1 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest active:scale-95 transition-all ${pay.canStart ? 'bg-emerald-600 text-white' : 'bg-amber-500 text-white'}`}>
+                                        {pay.canStart ? 'Assign & Resume' : 'Clear Dues to Dispatch'}
+                                     </button>
+                                  ) : (
+                                     <button onClick={() => { setChecklistTarget({ id: booking.id, type: 'pause' }); setSelectedChecklistIds(new Set()); setIsChecklistOpen(true); }} className="flex-1 py-2.5 bg-amber-500 text-white rounded-xl text-[10px] font-black uppercase tracking-widest active:scale-95 transition-all">Pause & Delink</button>
+                                  )}
                                   <button onClick={() => { setChecklistTarget({ id: booking.id, type: 'return' }); setSelectedChecklistIds(new Set()); setIsChecklistOpen(true); }} className="flex-1 py-2.5 bg-[#00eaff] text-black rounded-xl text-[10px] font-black uppercase tracking-widest active:scale-95 transition-all">Return</button>
                               </div>
                             </div>
@@ -598,12 +699,6 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
                       </Card>
                     );
                 })}
-                {filteredRentals.length === 0 && (
-                  <div className="col-span-full py-20 text-center border-2 border-dashed rounded-3xl bg-white border-slate-100">
-                     <Activity size={48} className="mx-auto text-slate-100 mb-4" />
-                     <p className="text-slate-400 font-bold">No active dispatch found on board.</p>
-                  </div>
-                )}
               </div>
             ) : (
               <div className="animate-in fade-in slide-in-from-right-2 duration-300">
@@ -632,7 +727,7 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
                                        <span className="text-[10px] text-slate-400">{cust?.phone}</span>
                                     </div>
                                  </td>
-                                 <td className="px-4 py-3 font-mono font-bold text-slate-700">{veh?.plateNumber}</td>
+                                 <td className="px-4 py-3 font-mono font-bold text-slate-700">{veh?.plateNumber || '--'}</td>
                                  <td className="px-4 py-3"><Badge variant="neutral">{b.rentalPlan}</Badge></td>
                                  <td className="px-4 py-3"><Badge variant={getBookingVariant(b.status, b.isSettled)}>{b.status}</Badge></td>
                                  <td className="px-4 py-3 text-slate-500">{formatDate(b.startedAt || b.createdAt)}</td>
@@ -643,9 +738,6 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
                        </tbody>
                     </table>
                   </div>
-                  {filteredRentals.length === 0 && (
-                    <div className="py-20 text-center italic text-slate-400">No rental history records found.</div>
-                  )}
                 </Card>
               </div>
             )}
@@ -774,27 +866,32 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
                      {storeBookings.filter(b => getPaymentStatus(b).isPendingCollection).map(b => {
                         const cust = state.customers.find(c => c.id === b.customerId);
                         const pay = getPaymentStatus(b);
+                        const isWeekly = b.rentalPlan === RentalPlan.WEEKLY;
                         return (
                           <div key={b.id} className="bg-white p-4 rounded-2xl border border-gray-200 shadow-sm flex items-center justify-between group active:scale-[0.98] transition-all">
                              <div className="flex items-center gap-3">
                                 <div className="p-2.5 bg-amber-50 text-amber-600 rounded-xl"><IndianRupee size={16} /></div>
                                 <div>
-                                   <p className="font-black text-gray-900 leading-none text-xs lg:text-sm">{cust?.name}</p>
-                                   <p className="text-[9px] text-gray-400 font-bold uppercase mt-1 tracking-tight">Node: {b.id.split('-')[1]}</p>
+                                   <div className="flex items-center gap-1.5">
+                                      <p className="font-black text-gray-900 leading-none text-xs lg:text-sm">{cust?.name}</p>
+                                      <Badge variant="neutral" className="text-[7px] py-0">{b.rentalPlan}</Badge>
+                                   </div>
+                                   <div className="flex items-center gap-2 mt-1">
+                                      <p className="text-[9px] text-gray-400 font-bold uppercase tracking-tight">Node: {(b.id || '').split('-')[1]}</p>
+                                      {pay.overdueDays > 0 && <span className="text-[8px] font-black text-rose-600 flex items-center gap-0.5 bg-rose-50 px-1 rounded"><Timer size={8}/> {pay.overdueDays}d Late</span>}
+                                   </div>
                                 </div>
                              </div>
                              <div className="text-right flex items-center gap-3">
                                 <div>
                                    <p className="text-sm lg:text-base font-black text-amber-600 leading-none">₹{pay.balance}</p>
+                                   {isWeekly && <p className="text-[7px] font-black text-rose-500 uppercase">100% Adv. Reqd</p>}
                                 </div>
                                 <button onClick={() => { setPaymentBookingId(b.id); setPaymentCash(''); setPaymentOnline(''); }} className="p-2 bg-amber-500 text-white rounded-lg active:scale-95 transition-all"><Banknote size={14} /></button>
                              </div>
                           </div>
                         );
                      })}
-                     {storeBookings.filter(b => getPaymentStatus(b).isPendingCollection).length === 0 && (
-                       <div className="py-12 bg-gray-50 rounded-2xl border border-dashed border-gray-200 text-center text-gray-400 text-xs font-bold uppercase tracking-widest italic">Clear</div>
-                     )}
                   </div>
                </div>
 
@@ -832,9 +929,6 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
                           </div>
                         );
                      })}
-                     {storeBookings.filter(b => getPaymentStatus(b).isPendingRefund).length === 0 && (
-                       <div className="py-12 bg-gray-50 rounded-2xl border border-dashed border-gray-200 text-center text-gray-400 text-xs font-bold uppercase tracking-widest italic">No pending refunds</div>
-                     )}
                   </div>
                </div>
             </div>
@@ -852,7 +946,7 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 lg:gap-6">
-               {storeCustomers.filter(c => c.name.toLowerCase().includes(searchQuery.toLowerCase()) || c.phone.includes(searchQuery)).map(cust => {
+               {storeCustomers.filter(c => (c.name || '').toLowerCase().includes(searchQuery.toLowerCase()) || (c.phone || '').includes(searchQuery)).map(cust => {
                  const hasFlag = customerHasUncleared(cust.id);
                  const isBooked = isCustomerAlreadyBooked(cust.id);
                  return (
@@ -870,7 +964,7 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
                     >
                         <div className="flex items-center space-x-3">
                           <div className={`w-9 h-9 rounded-lg flex items-center justify-center font-bold text-xs ${hasFlag ? 'bg-rose-100 text-rose-600' : 'bg-slate-100 text-slate-700'}`}>
-                            {cust.name.substring(0,2).toUpperCase()}
+                            {(cust.name || '??').substring(0,2).toUpperCase()}
                           </div>
                           <div className="flex-1 overflow-hidden">
                             <div className="flex items-center gap-1.5 pr-2">
@@ -945,6 +1039,12 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
                     <span className="text-xs font-bold text-slate-500 uppercase tracking-widest">Inspection Fines</span>
                     <span className="font-black text-rose-600">₹{pay?.finesAmount || 0}</span>
                  </div>
+                 {pay?.extensionFines > 0 && (
+                   <div className="flex justify-between py-3">
+                      <span className="text-xs font-bold text-amber-600 uppercase tracking-widest flex items-center gap-1"><Timer size={10}/> Extension ({pay.overdueDays}d)</span>
+                      <span className="font-black text-amber-600">₹{pay.extensionFines}</span>
+                   </div>
+                 )}
                  <div className="flex justify-between py-4 items-center">
                     <span className="text-sm font-black text-[#0891b2] uppercase tracking-widest">Refund Amount</span>
                     <div className="text-right">
@@ -962,7 +1062,7 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
         })()}
       </Modal>
 
-      <Modal isOpen={isChecklistOpen} onClose={() => { setIsChecklistOpen(false); setChecklistTarget(null); }} title="Return Protocol" confirmLabel="Confirm Return" onConfirm={handleReturnChecklistSubmit}>
+      <Modal isOpen={isChecklistOpen} onClose={() => { setIsChecklistOpen(false); setChecklistTarget(null); }} title={checklistTarget?.type === 'pause' ? 'Pause Requisition (Inspection)' : 'Return Protocol'} confirmLabel={checklistTarget?.type === 'pause' ? 'Confirm Pause & Delink' : 'Confirm Return'} onConfirm={handleReturnChecklistSubmit}>
          <div className="space-y-4">
             <div className="p-4 bg-slate-900 rounded-2xl text-white">
                <div className="flex justify-between items-center mb-3">
@@ -974,11 +1074,13 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
                </div>
                {checklistTarget && (() => {
                  const booking = state.bookings.find(b => b.id === checklistTarget.id);
+                 const pay = booking ? getPaymentStatus(booking) : null;
                  const deposit = Number(booking?.depositAmount || 0);
-                 const balance = deposit - checklistFineTotal;
+                 const balance = deposit - checklistFineTotal - (pay?.extensionFines || 0);
                  return (
                    <div className="space-y-1.5 pt-3 border-t border-slate-800 text-[10px]">
                       <div className="flex justify-between"><span>Deposit Balance</span><span>₹{deposit}</span></div>
+                      {pay?.extensionFines > 0 && <div className="flex justify-between text-amber-400"><span>Extension Fine</span><span>₹{pay.extensionFines}</span></div>}
                       <div className="flex justify-between font-black pt-2 mt-1 border-t border-slate-700">
                         <span>{balance >= 0 ? 'Refundable' : 'Payable'}</span>
                         <span className={balance >= 0 ? 'text-emerald-400' : 'text-rose-400'}>₹{Math.abs(balance)}</span>
@@ -987,6 +1089,12 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
                  );
                })()}
             </div>
+            {checklistTarget?.type === 'pause' && (
+              <div className="p-3 bg-amber-50 border border-amber-100 rounded-xl flex items-center gap-3">
+                 <AlertTriangle size={18} className="text-amber-600" />
+                 <p className="text-[10px] text-amber-800 font-medium leading-tight italic">Warning: Assets will be delinked and returned to IDLE inventory. Rider must re-dispatch for resume.</p>
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-2 max-h-[40vh] overflow-y-auto scrollbar-hide pr-1">
                {CHECKLIST_ITEMS.map(item => (
                  <button key={item.id} onClick={() => toggleChecklistItem(item.id)} className={`p-2.5 rounded-xl border-2 text-left transition-all relative ${selectedChecklistIds.has(item.id) ? 'border-rose-400 bg-rose-50' : 'border-slate-50 bg-slate-50'}`}>
@@ -998,6 +1106,54 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
          </div>
       </Modal>
 
+      {/* Resume/Re-assign Modal */}
+      <Modal 
+        isOpen={!!isResumingId} 
+        onClose={() => { setIsResumingId(null); setSelectedVehId(''); setSelectedBatteryId(''); }} 
+        title="Resume Ride: Assign Assets" 
+        confirmLabel="Resume Ride" 
+        onConfirm={handleResumeBooking}
+      >
+        <div className="space-y-6">
+           <div className="p-4 bg-emerald-50 border border-emerald-100 rounded-2xl flex items-center gap-3">
+              <RefreshCcw size={20} className="text-emerald-600 animate-spin-slow" />
+              <div>
+                 <p className="text-xs font-black text-emerald-900 uppercase">Resuming Lifecycle</p>
+                 <p className="text-[10px] text-emerald-700 font-medium">Please assign a new scooter and battery to release the rider.</p>
+              </div>
+           </div>
+
+           <div className="space-y-4">
+              <StatusInput 
+                label="Assign New Scooter" 
+                value={selectedVehId} 
+                onChange={setSelectedVehId} 
+                options={[
+                  { value: "", label: "-- Select Available Scooter --" },
+                  ...availableVehicles.map(v => ({ value: v.id, label: v.plateNumber }))
+                ]} 
+              />
+              <StatusInput 
+                label="Assign New Battery" 
+                value={selectedBatteryId} 
+                onChange={setSelectedBatteryId} 
+                options={[
+                  { value: "", label: "-- Select Available Battery --" },
+                  ...availableBatteries.map(b => ({ value: b.id, label: b.serialNumber }))
+                ]} 
+              />
+           </div>
+
+           <div className="p-4 bg-slate-900 rounded-2xl text-white shadow-xl">
+              <div className="flex items-center gap-2 mb-3">
+                 <ShieldCheck size={16} className="text-[#00eaff]" />
+                 <h4 className="text-[10px] font-black uppercase tracking-widest">System Check</h4>
+              </div>
+              <p className="text-[10px] text-slate-400 leading-relaxed font-medium">Resuming will mark the assets as IN USE and restore the ride to ACTIVE status. Ensure physical handover is completed.</p>
+           </div>
+        </div>
+      </Modal>
+
       <Modal isOpen={!!swapType} onClose={resetSwapState} title="Asset Swap">
         <div className="space-y-4">
            {swapStep === 'select' ? (
@@ -1005,7 +1161,7 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
                {swapBookingId && (() => {
                   const b = state.bookings.find(x => x.id === swapBookingId);
                   const oldAsset = swapType === 'vehicle' ? state.vehicles.find(v => v.id === b?.vehicleId)?.plateNumber : state.batteries.find(bat => bat.id === b?.batteryId)?.serialNumber;
-                  return <div className="p-3 bg-amber-50 border border-amber-100 rounded-xl"><p className="text-[9px] font-bold text-amber-500 uppercase tracking-widest mb-0.5">Replacing Asset</p><p className="text-base font-black text-amber-900">{oldAsset}</p></div>;
+                  return <div className="p-3 bg-amber-50 border border-amber-100 rounded-xl"><p className="text-[9px] font-bold text-amber-500 uppercase tracking-widest mb-0.5">Replacing Asset</p><p className="text-base font-black text-amber-900">{oldAsset || 'None'}</p></div>;
                })()}
                <StatusInput 
                  label={`Available ${swapType}`} 
@@ -1032,6 +1188,27 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
                       </div>
                       <Wrench size={24} className="text-slate-600" />
                    </div>
+                   {swapBookingId && (() => {
+                     const b = state.bookings.find(x => x.id === swapBookingId);
+                     const s = b ? getPaymentStatus(b) : null;
+                     const threshold = s?.thresholdRatio || 0.5;
+                     
+                     // Include checklist fine in current evaluation
+                     const totalCostWithSwap = (s?.totalDue || 0) + checklistFineTotal;
+                     const minNeeded = totalCostWithSwap * threshold;
+                     const currentPaid = s?.paid || 0;
+                     const below = currentPaid < minNeeded;
+                     
+                     return (
+                        <div className={`mt-3 p-3 rounded-xl border text-[10px] font-medium flex items-center justify-between ${below ? 'bg-rose-500/20 border-rose-500' : 'bg-white/10 border-white/10'}`}>
+                           <div className="flex items-center gap-2">
+                              {below ? <Ban size={12} /> : <CheckCircle size={12} />}
+                              <span>{below ? 'Threshold Breach (Will Pause)' : 'Threshold Safe (Stay Active)'}</span>
+                           </div>
+                           <span className="font-black">Limit ({Math.round(threshold * 100)}%): ₹{Math.ceil(minNeeded)}</span>
+                        </div>
+                     );
+                   })()}
                 </div>
                 <div className="grid grid-cols-2 gap-2 max-h-[35vh] overflow-y-auto scrollbar-hide">
                    {CHECKLIST_ITEMS.map(item => (
@@ -1066,10 +1243,28 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
            {paymentBookingId && (() => {
              const b = state.bookings.find(x => x.id === paymentBookingId);
              const s = b ? getPaymentStatus(b) : null;
+             const isWeekly = b?.rentalPlan === RentalPlan.WEEKLY;
              return (
                <div className="p-4 bg-blue-50 border border-blue-100 rounded-2xl">
-                 <p className="text-[10px] font-bold text-blue-400 uppercase tracking-widest mb-0.5">Total System Outstanding</p>
-                 <p className="text-xl font-black text-blue-900">₹{s?.balance}</p>
+                 <p className="text-[10px] font-bold text-blue-400 uppercase tracking-widest mb-0.5">Coverage Status ({b?.rentalPlan})</p>
+                 <div className="flex justify-between items-end">
+                    <div>
+                      <p className="text-xl font-black text-blue-900">₹{s?.balance} Outstanding</p>
+                      <p className="text-[9px] text-blue-600 font-bold uppercase mt-0.5">Required for dispatch: ₹{Math.max(0, Math.ceil((s?.minToStart || 0) - (s?.paid || 0)))}</p>
+                    </div>
+                    <Badge variant={s?.canStart ? 'success' : 'warning'}>{Math.round(s?.coveragePct || 0)}% Paid</Badge>
+                 </div>
+                 {isWeekly && (
+                    <div className="mt-2 text-[8px] font-black text-blue-500 uppercase flex items-center gap-1">
+                       <Info size={10} /> Note: Weekly plans require full 100% payment for ride release.
+                    </div>
+                 )}
+                 {s && s.extensionFines > 0 && (
+                   <div className="mt-2 p-2 bg-amber-100/50 rounded-lg flex items-center justify-between border border-amber-200">
+                      <span className="text-[9px] font-black text-amber-700 uppercase flex items-center gap-1"><Timer size={10}/> Extension Dues</span>
+                      <span className="text-[10px] font-black text-amber-900">₹{s.extensionFines}</span>
+                   </div>
+                 )}
                </div>
              );
            })()}
@@ -1175,7 +1370,7 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
             <div className="p-4 bg-slate-900 rounded-2xl text-white shadow-xl">
                <div className="flex items-center gap-2 mb-3 border-b border-white/10 pb-2">
                   <Receipt size={16} className="text-[#00eaff]" />
-                  <h4 className="text-[10px] font-black uppercase tracking-widest">Payment Breakup</h4>
+                  <h4 className="text-[10px] font-black uppercase tracking-widest">Revenue Protection</h4>
                </div>
                <div className="space-y-1.5 text-[10px]">
                   <div className="flex justify-between text-slate-400">
@@ -1195,8 +1390,12 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
                     <span className="font-bold text-white">₹{priceBreakup.deposit}</span>
                   </div>
                   <div className="flex justify-between items-center pt-2 mt-2 border-t border-white/20">
-                    <span className="text-xs font-black uppercase tracking-widest text-[#00eaff]">Total to Collect</span>
-                    <span className="text-lg font-black">₹{priceBreakup.total}</span>
+                    <span className="text-xs font-black uppercase tracking-widest text-[#00eaff]">
+                      Dispatch Limit ({selectedPlan === RentalPlan.WEEKLY ? '100%' : '50%'})
+                    </span>
+                    <span className="text-lg font-black">
+                      ₹{Math.ceil(priceBreakup.total * (selectedPlan === RentalPlan.WEEKLY ? 1.0 : 0.5))}
+                    </span>
                   </div>
                </div>
             </div>

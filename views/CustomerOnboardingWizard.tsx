@@ -1,16 +1,18 @@
+
+// Added React import to fix namespace error
 import React, { useState } from 'react';
 import { 
   User, 
   FileText, 
-  Phone, 
   ShieldCheck, 
   ArrowRight, 
   ArrowLeft, 
   CheckCircle2, 
   AlertCircle,
   CalendarDays,
-  MapPin,
-  HeartPulse
+  HeartPulse,
+  Landmark,
+  QrCode
 } from 'lucide-react';
 import { Customer } from '../types';
 import { Modal } from '../components/Common';
@@ -18,18 +20,20 @@ import { Modal } from '../components/Common';
 interface CustomerOnboardingWizardProps {
   isOpen: boolean;
   onClose: () => void;
-  onSubmit: (customer: Omit<Customer, 'id' | 'storeId'>) => void;
+  onSubmit: (customer: Omit<Customer, 'id' | 'storeId'>) => Promise<void> | void;
 }
 
 const STEPS = [
-  { id: 'personal', label: 'Section A', icon: User },
-  { id: 'docs', label: 'Documents', icon: FileText },
+  { id: 'personal', label: 'Identity', icon: User },
+  { id: 'docs', label: 'KYC IDs', icon: FileText },
+  { id: 'bank', label: 'Banking', icon: Landmark },
   { id: 'schedule', label: 'Schedule', icon: CalendarDays },
   { id: 'consent', label: 'Legal', icon: ShieldCheck },
 ];
 
 const CustomerOnboardingWizard: React.FC<CustomerOnboardingWizardProps> = ({ isOpen, onClose, onSubmit }) => {
   const [currentStep, setCurrentStep] = useState(0);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
     dob: '',
@@ -40,6 +44,13 @@ const CustomerOnboardingWizard: React.FC<CustomerOnboardingWizardProps> = ({ isO
     panNo: '',
     emergencyContact1: '',
     emergencyContact2: '',
+    // Bank Details
+    bankName: '',
+    accountHolderName: '',
+    accountNumber: '',
+    ifscCode: '',
+    upiId: '',
+    // Logistics
     startDate: new Date().toISOString().split('T')[0],
     endDate: '',
     consentData: false,
@@ -59,9 +70,15 @@ const CustomerOnboardingWizard: React.FC<CustomerOnboardingWizardProps> = ({ isO
       if (!formData.aadharNo) newErrors.aadharNo = 'Aadhar No is required';
       if (!formData.emergencyContact1) newErrors.emergencyContact1 = 'Emergency Contact 1 is required';
     } else if (currentStep === 2) {
+      if (!formData.bankName) newErrors.bankName = 'Bank Name is required';
+      if (!formData.accountHolderName) newErrors.accountHolderName = 'Holder Name is required';
+      if (!formData.accountNumber) newErrors.accountNumber = 'Account No is required';
+      if (!formData.ifscCode) newErrors.ifscCode = 'IFSC is required';
+      if (formData.ifscCode && formData.ifscCode.length !== 11) newErrors.ifscCode = 'IFSC must be 11 chars';
+    } else if (currentStep === 3) {
       if (!formData.startDate) newErrors.startDate = 'Start date is required';
       if (!formData.endDate) newErrors.endDate = 'End date is required';
-    } else if (currentStep === 3) {
+    } else if (currentStep === 4) {
       if (!formData.consentData || !formData.consentSOP) newErrors.consent = 'Both agreements must be accepted';
     }
 
@@ -69,28 +86,40 @@ const CustomerOnboardingWizard: React.FC<CustomerOnboardingWizardProps> = ({ isO
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleNext = () => {
+  const handleNext = async () => {
     if (validateStep()) {
       if (currentStep < STEPS.length - 1) {
         setCurrentStep(currentStep + 1);
       } else {
-        onSubmit({
-          name: formData.name,
-          phone: formData.phone,
-          email: formData.email,
-          dob: formData.dob,
-          address: formData.address,
-          aadharNo: formData.aadharNo,
-          panNo: formData.panNo,
-          emergencyContact1: formData.emergencyContact1,
-          emergencyContact2: formData.emergencyContact2,
-          kycStatus: false,
-          agreementAccepted: formData.consentSOP,
-          startDate: formData.startDate,
-          endDate: formData.endDate
-        });
-        reset();
-        onClose(); // Ensure the window closes after submission
+        setIsSubmitting(true);
+        try {
+          await onSubmit({
+            name: formData.name,
+            phone: formData.phone,
+            email: formData.email,
+            dob: formData.dob,
+            address: formData.address,
+            aadharNo: formData.aadharNo,
+            panNo: formData.panNo,
+            emergencyContact1: formData.emergencyContact1,
+            emergencyContact2: formData.emergencyContact2,
+            kycStatus: false,
+            agreementAccepted: formData.consentSOP,
+            startDate: formData.startDate,
+            endDate: formData.endDate,
+            bankName: formData.bankName,
+            accountHolderName: formData.accountHolderName,
+            accountNumber: formData.accountNumber,
+            ifscCode: formData.ifscCode,
+            upiId: formData.upiId
+          });
+          reset();
+          onClose();
+        } catch (err) {
+          console.error("Wizard submit error:", err);
+        } finally {
+          setIsSubmitting(false);
+        }
       }
     }
   };
@@ -101,6 +130,7 @@ const CustomerOnboardingWizard: React.FC<CustomerOnboardingWizardProps> = ({ isO
 
   const reset = () => {
     setCurrentStep(0);
+    setIsSubmitting(false);
     setFormData({
       name: '',
       dob: '',
@@ -111,6 +141,11 @@ const CustomerOnboardingWizard: React.FC<CustomerOnboardingWizardProps> = ({ isO
       panNo: '',
       emergencyContact1: '',
       emergencyContact2: '',
+      bankName: '',
+      accountHolderName: '',
+      accountNumber: '',
+      ifscCode: '',
+      upiId: '',
       startDate: new Date().toISOString().split('T')[0],
       endDate: '',
       consentData: false,
@@ -135,21 +170,21 @@ const CustomerOnboardingWizard: React.FC<CustomerOnboardingWizardProps> = ({ isO
   return (
     <Modal 
       isOpen={isOpen} 
-      onClose={() => { onClose(); reset(); }} 
-      title="Vehicle & Battery Requisition Form"
+      onClose={() => { if (!isSubmitting) { onClose(); reset(); } }} 
+      title="Rider Requisition Form"
     >
       <div className="space-y-6">
         {/* Progress Stepper */}
-        <div className="flex items-center justify-between px-2 pb-6 border-b border-gray-100">
+        <div className="flex items-center justify-between px-2 pb-6 border-b border-gray-100 overflow-x-auto scrollbar-hide gap-4">
           {STEPS.map((step, idx) => {
             const Icon = step.icon;
             const isActive = currentStep === idx;
             const isCompleted = currentStep > idx;
             return (
-              <div key={step.id} className="flex flex-col items-center space-y-2 flex-1">
+              <div key={step.id} className="flex flex-col items-center space-y-2 shrink-0">
                 <div className={`w-9 h-9 rounded-full flex items-center justify-center transition-all ${
                   isActive ? 'bg-[#00eaff] text-black shadow-lg shadow-cyan-400/30' : 
-                  isCompleted ? 'bg-emerald-500 text-white' : 'bg-gray-100 text-gray-400'
+                  isCompleted ? 'bg-emerald-50 text-white' : 'bg-gray-100 text-gray-400'
                 }`}>
                   {isCompleted ? <CheckCircle2 size={16} /> : <Icon size={16} />}
                 </div>
@@ -161,25 +196,25 @@ const CustomerOnboardingWizard: React.FC<CustomerOnboardingWizardProps> = ({ isO
           })}
         </div>
 
-        <div className="min-h-[320px] animate-in fade-in slide-in-from-right-4 duration-300">
+        <div className="min-h-[360px] animate-in fade-in slide-in-from-right-4 duration-300">
           {currentStep === 0 && (
             <div className="space-y-4">
               <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-2">
-                 <User size={12} /> A. Please fill the registration form
+                 <User size={12} /> Section A: Personal Identity
               </h4>
-              <InputField label="1. Full Name" value={formData.name} onChange={v => updateField('name', v)} error={errors.name} placeholder="Legal Name" />
+              <InputField label="1. Full Name" value={formData.name} onChange={v => updateField('name', v)} error={errors.name} placeholder="Legal Name as per Aadhar" />
               <div className="grid grid-cols-2 gap-4">
                 <InputField label="2. Date of Birth" type="date" value={formData.dob} onChange={v => updateField('dob', v)} error={errors.dob} />
-                <InputField label="3. Contact Number" value={formData.phone} onChange={v => updateField('phone', v)} error={errors.phone} placeholder="Primary Phone" />
+                <InputField label="3. Contact Number" value={formData.phone} onChange={v => updateField('phone', v)} error={errors.phone} placeholder="Primary Mobile" />
               </div>
-              <InputField label="4. Email Address" type="email" value={formData.email} onChange={v => updateField('email', v)} placeholder="Email" />
+              <InputField label="4. Email Address" type="email" value={formData.email} onChange={v => updateField('email', v)} placeholder="Email (Optional)" />
               <div className="space-y-1.5">
                 <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">5. Permanent Address</label>
                 <textarea 
                   className={`w-full px-4 py-3 rounded-xl border outline-none text-xs bg-gray-50 h-20 resize-none transition-all ${errors.address ? 'border-rose-400 ring-4 ring-rose-500/10' : 'border-slate-200 focus:border-[#00eaff]'}`}
                   value={formData.address}
                   onChange={e => updateField('address', e.target.value)}
-                  placeholder="Complete Address"
+                  placeholder="Street, City, Pincode"
                 />
               </div>
             </div>
@@ -187,36 +222,64 @@ const CustomerOnboardingWizard: React.FC<CustomerOnboardingWizardProps> = ({ isO
 
           {currentStep === 1 && (
             <div className="space-y-4">
+              <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-2">
+                 <FileText size={12} /> Statutory Documents
+              </h4>
               <div className="grid grid-cols-2 gap-4">
-                <InputField label="Aadhar No" value={formData.aadharNo} onChange={v => updateField('aadharNo', v)} error={errors.aadharNo} placeholder="12-digit number" />
-                <InputField label="PAN No" value={formData.panNo} onChange={v => updateField('panNo', v)} placeholder="Format: ABCDE1234F" />
+                <InputField label="Aadhar Number" value={formData.aadharNo} onChange={v => updateField('aadharNo', v)} error={errors.aadharNo} placeholder="12-digit UID" />
+                <InputField label="PAN Number" value={formData.panNo} onChange={v => updateField('panNo', v)} placeholder="ABCDE1234F" />
               </div>
               <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 mt-2">
                  <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-                   <HeartPulse size={12} className="text-rose-500" /> Emergency Support
+                   <HeartPulse size={12} className="text-rose-500" /> Emergency Response
                  </p>
                  <div className="space-y-4">
-                    <InputField label="Emergency Contact Number 1" value={formData.emergencyContact1} onChange={v => updateField('emergencyContact1', v)} error={errors.emergencyContact1} placeholder="Name or Contact" />
-                    <InputField label="Number 2" value={formData.emergencyContact2} onChange={v => updateField('emergencyContact2', v)} placeholder="Secondary Contact" />
+                    <InputField label="Primary Emergency Contact" value={formData.emergencyContact1} onChange={v => updateField('emergencyContact1', v)} error={errors.emergencyContact1} placeholder="Name - Relation - Mobile" />
+                    <InputField label="Secondary Contact" value={formData.emergencyContact2} onChange={v => updateField('emergencyContact2', v)} placeholder="Backup Name - Mobile" />
                  </div>
               </div>
             </div>
           )}
 
           {currentStep === 2 && (
-            <div className="space-y-6">
-              <div className="p-4 bg-[#00eaff]/10 border border-[#00eaff]/20 rounded-2xl">
-                 <p className="text-xs font-black text-[#0891b2] uppercase tracking-widest">Subscription Window</p>
-                 <p className="text-[10px] text-[#0891b2] font-medium mt-1">Specify your planned usage duration for initial dispatch.</p>
+            <div className="space-y-4">
+               <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-2">
+                 <Landmark size={12} /> Section B: Settlement Banking
+              </h4>
+              <div className="bg-blue-50 border border-blue-100 p-3 rounded-xl mb-4">
+                <p className="text-[10px] text-blue-700 font-bold leading-tight">Required for automated security deposit refunds and financial settlements.</p>
               </div>
+              
+              <InputField label="Bank Name" value={formData.bankName} onChange={v => updateField('bankName', v)} error={errors.bankName} placeholder="e.g., HDFC Bank, SBI" />
+              <InputField label="Account Holder Name" value={formData.accountHolderName} onChange={v => updateField('accountHolderName', v)} error={errors.accountHolderName} placeholder="Name as per Passbook" />
+              
               <div className="grid grid-cols-1 gap-4">
-                <InputField label="Start Date" type="date" value={formData.startDate} onChange={v => updateField('startDate', v)} error={errors.startDate} />
-                <InputField label="End Date" type="date" value={formData.endDate} onChange={v => updateField('endDate', v)} error={errors.endDate} />
+                <div className="flex gap-4">
+                   <InputField label="Account Number" value={formData.accountNumber} onChange={v => updateField('accountNumber', v)} error={errors.accountNumber} placeholder="Full A/C Number" />
+                   <InputField label="IFSC Code" value={formData.ifscCode} onChange={v => updateField('ifscCode', v.toUpperCase())} error={errors.ifscCode} placeholder="11 Chars" />
+                </div>
+                <div className="relative">
+                  <div className="absolute left-4 top-[34px] text-gray-400"><QrCode size={14} /></div>
+                  <InputField label="UPI ID (Optional)" value={formData.upiId} onChange={v => updateField('upiId', v)} placeholder="username@bank" />
+                </div>
               </div>
             </div>
           )}
 
           {currentStep === 3 && (
+            <div className="space-y-6">
+              <div className="p-4 bg-[#00eaff]/10 border border-[#00eaff]/20 rounded-2xl">
+                 <p className="text-xs font-black text-[#0891b2] uppercase tracking-widest">Subscription Window</p>
+                 <p className="text-[10px] text-[#0891b2] font-medium mt-1">Select the operational duration for this vehicle requisition.</p>
+              </div>
+              <div className="grid grid-cols-1 gap-4">
+                <InputField label="Subscription Start" type="date" value={formData.startDate} onChange={v => updateField('startDate', v)} error={errors.startDate} />
+                <InputField label="Expected End Date" type="date" value={formData.endDate} onChange={v => updateField('endDate', v)} error={errors.endDate} />
+              </div>
+            </div>
+          )}
+
+          {currentStep === 4 && (
             <div className="space-y-4">
               <div 
                 className={`p-5 rounded-2xl border-2 transition-all cursor-pointer ${formData.consentData ? 'border-[#00eaff] bg-cyan-50/20' : 'border-gray-100 bg-gray-50'}`}
@@ -227,11 +290,11 @@ const CustomerOnboardingWizard: React.FC<CustomerOnboardingWizardProps> = ({ isO
                     {formData.consentData && <CheckCircle2 size={16} className="text-black" />}
                   </div>
                   <div>
-                    <p className="text-[9px] font-black uppercase text-gray-500 mb-1">Section B: Data Privacy</p>
+                    <p className="text-[9px] font-black uppercase text-gray-500 mb-1">Section C: Data Privacy</p>
                     <p className="text-[11px] leading-relaxed text-gray-700 font-medium italic">
-                      "By providing the above details, I hereby consent to the collection, processing, and storage of my personal data in accordance with company guidelines and applicable data protection policies."
+                      "I hereby consent to the collection, processing, and storage of my personal and financial data for operational purposes and compliance."
                     </p>
-                    <p className="text-[10px] font-black text-[#0891b2] mt-2 uppercase">I Agree</p>
+                    <p className="text-[10px] font-black text-[#0891b2] mt-2 uppercase">Consent Granted</p>
                   </div>
                 </div>
               </div>
@@ -245,11 +308,11 @@ const CustomerOnboardingWizard: React.FC<CustomerOnboardingWizardProps> = ({ isO
                     {formData.consentSOP && <CheckCircle2 size={16} className="text-black" />}
                   </div>
                   <div>
-                    <p className="text-[9px] font-black uppercase text-gray-500 mb-1">Section C: Standard Operating Procedures</p>
+                    <p className="text-[9px] font-black uppercase text-gray-500 mb-1">Section D: Fleet Policy</p>
                     <p className="text-[11px] leading-relaxed text-gray-700 font-medium italic">
-                      "I confirm that I have read, understood, and agree to abide by the Standard Operating Procedures detailed in Service Agreement. I understand that failure to comply may result in task and financial penalties."
+                      "I agree to abide by YANA's Standard Operating Procedures. I understand that asset damage will result in financial deductions from my security deposit."
                     </p>
-                    <p className="text-[10px] font-black text-[#0891b2] mt-2 uppercase">I Agree</p>
+                    <p className="text-[10px] font-black text-[#0891b2] mt-2 uppercase">Agreement Signed</p>
                   </div>
                 </div>
               </div>
@@ -266,7 +329,7 @@ const CustomerOnboardingWizard: React.FC<CustomerOnboardingWizardProps> = ({ isO
         <div className="flex items-center justify-between pt-6 border-t border-gray-100">
           <button 
             onClick={handleBack} 
-            disabled={currentStep === 0}
+            disabled={currentStep === 0 || isSubmitting}
             className={`flex items-center space-x-2 text-xs font-black uppercase tracking-widest transition-all ${currentStep === 0 ? 'opacity-0 pointer-events-none' : 'text-gray-400 hover:text-black'}`}
           >
             <ArrowLeft size={16} /> <span>Back</span>
@@ -274,9 +337,10 @@ const CustomerOnboardingWizard: React.FC<CustomerOnboardingWizardProps> = ({ isO
           
           <button 
             onClick={handleNext}
-            className="flex items-center space-x-2 bg-[#00eaff] text-black px-10 py-3.5 rounded-2xl text-xs font-black uppercase tracking-widest shadow-lg shadow-cyan-400/20 active:scale-95 transition-all"
+            disabled={isSubmitting}
+            className="flex items-center space-x-2 bg-[#00eaff] text-black px-10 py-3.5 rounded-2xl text-xs font-black uppercase tracking-widest shadow-lg shadow-cyan-400/20 active:scale-95 transition-all disabled:opacity-70 disabled:cursor-not-allowed"
           >
-            <span>{currentStep === STEPS.length - 1 ? 'Submit Requisition' : 'Continue'}</span>
+            <span>{isSubmitting ? 'Processing...' : currentStep === STEPS.length - 1 ? 'Execute Onboarding' : 'Continue'}</span>
             <ArrowRight size={16} />
           </button>
         </div>

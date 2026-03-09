@@ -1,3 +1,4 @@
+
 export enum UserRole {
   OPERATOR = 'Operator',
   ADMIN = 'Admin',
@@ -77,13 +78,19 @@ export interface Customer {
   storeId: string;
   startDate?: string;
   endDate?: string;
+  // Banking for Settlements
+  bankName?: string;
+  accountHolderName?: string;
+  accountNumber?: string;
+  ifscCode?: string;
+  upiId?: string;
 }
 
 export interface Booking {
   id: string;
   customerId: string;
-  vehicleId: string;
-  batteryId: string;
+  vehicleId: string | null;
+  batteryId: string | null;
   storeId: string;
   status: BookingStatus;
   createdAt: number;

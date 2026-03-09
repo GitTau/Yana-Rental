@@ -21,25 +21,39 @@ const App: React.FC = () => {
   const [currentView, setCurrentView] = useState('dashboard');
   const yana = useYanaData();
 
-  // Auto-route on role change
+  const { stores, activeStoreId } = yana.state;
+  const { switchStore } = yana;
+
   useEffect(() => {
+    if (!stores || stores.length === 0) return;
+
     if (currentRole === UserRole.OPERATOR) {
       setCurrentView('operator-portal');
+      if (activeStoreId === 'all') switchStore(stores[0].id);
     } else if (currentRole === UserRole.RIDER) {
       setCurrentView('rider-portal');
+      if (activeStoreId === 'all') switchStore(stores[0].id);
     } else if (currentRole === UserRole.ADMIN) {
       if (['operator-portal', 'rider-portal'].includes(currentView)) {
         setCurrentView('dashboard');
       }
     }
-  }, [currentRole, currentView]);
+  }, [currentRole, currentView, activeStoreId, stores, switchStore]);
 
   const renderView = () => {
+    if (yana.isLoading && stores.length === 0) {
+      return (
+        <div className="flex flex-col items-center justify-center h-64 text-slate-400">
+           <div className="w-8 h-8 border-4 border-[#00eaff] border-t-transparent rounded-full animate-spin mb-4" />
+           <p className="text-xs font-black uppercase tracking-widest">Hydrating from Supabase...</p>
+        </div>
+      );
+    }
+
     if (currentRole === UserRole.OPERATOR) {
       return (
         <OperatorPortal 
           state={yana.state}
-          // Fix: Added missing userRole prop required by OperatorPortalProps
           userRole={currentRole}
           onStart={yana.startBooking}
           onPause={yana.pauseBooking}
@@ -68,35 +82,12 @@ const App: React.FC = () => {
 
     switch (currentView) {
       case 'dashboard': return <Dashboard state={yana.state} />;
-      case 'fleet': return (
-        <Vehicles 
-          state={yana.state} 
-          onUpdateStatus={yana.updateVehicleStatus} 
-          onAssignBattery={yana.assignBattery} 
-        />
-      );
-      case 'booking-history': return (
-        <AdminBookings 
-          state={yana.state}
-          onUpdateBooking={yana.updateBooking}
-        />
-      );
+      case 'fleet': return <Vehicles state={yana.state} onUpdateStatus={yana.updateVehicleStatus} onAssignBattery={yana.assignBattery} />;
+      case 'booking-history': return <AdminBookings state={yana.state} onUpdateBooking={yana.updateBooking} />;
       case 'batteries': return <Batteries state={yana.state} />;
-      case 'financials': return (
-        <Financials 
-          state={yana.state}
-          onRecordPayment={yana.recordPayment}
-          onMarkSettled={yana.markBookingAsSettled}
-        />
-      );
+      case 'financials': return <Financials state={yana.state} onRecordPayment={yana.recordPayment} onMarkSettled={yana.markBookingAsSettled} />;
       case 'customers': return <Customers state={yana.state} onCreate={yana.createCustomer} />;
-      case 'maintenance': return (
-        <Maintenance 
-          state={yana.state} 
-          onCreateJob={yana.createMaintenanceJob} 
-          onCloseJob={yana.closeMaintenanceJob} 
-        />
-      );
+      case 'maintenance': return <Maintenance state={yana.state} onCreateJob={yana.createMaintenanceJob} onCloseJob={yana.closeMaintenanceJob} />;
       case 'logs': return <Logs state={yana.state} />;
       case 'admin': return (
         <AdminStoreManagement 
@@ -112,6 +103,8 @@ const App: React.FC = () => {
           onBulkCustomers={yana.bulkCreateCustomers}
           onUpdateVehicle={yana.updateVehicle}
           onUpdateBattery={yana.updateBattery}
+          onUpdateCustomer={yana.updateCustomer}
+          onDeleteCustomer={yana.deleteCustomer}
         />
       );
       default: return <Dashboard state={yana.state} />;

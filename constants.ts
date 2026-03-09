@@ -1,3 +1,4 @@
+
 import { Store, Vehicle, Battery, Customer, VehicleStatus, BatteryStatus, RentalRates } from './types';
 
 export const MOCK_OPERATOR_ID = 'OP-7742';
@@ -48,26 +49,32 @@ c4,Subhashree Jena,9437012345,subha@yana.in,false,false,s2
 c5,Debasish Roy,9007012345,deba@yana.in,true,true,s3
 c6,Ananya Chatterjee,9830054321,ananya@yana.in,false,false,s3`;
 
-// Helper to parse CSV strings into objects
+// Improved CSV parser that handles quotes and multiple formats
 export const parseCSV = <T>(csv: string): T[] => {
-  const lines = csv.trim().split('\n');
-  const headers = lines[0].split(',');
+  if (!csv || !csv.trim()) return [];
+  
+  const lines = csv.trim().split(/\r?\n/);
+  if (lines.length < 2) return [];
+
+  const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
   
   return lines.slice(1).map(line => {
-    const values = line.split(',');
+    // Regex to handle commas inside quotes
+    const values = line.match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g) || line.split(',');
     const obj: any = {};
     headers.forEach((header, index) => {
-      let val: any = values[index];
-      // Convert booleans
+      let val: any = values[index]?.trim().replace(/^"|"$/g, '');
+      
       if (val === 'true') val = true;
       if (val === 'false') val = false;
-      // Convert numbers (new targetRentals field)
-      if (!isNaN(val) && val !== '') val = Number(val);
+      if (val !== '' && !isNaN(val) && !header.toLowerCase().includes('phone') && !header.toLowerCase().includes('aadhar')) {
+        val = Number(val);
+      }
       
-      obj[header.trim()] = val;
+      obj[header] = val;
     });
     return obj as T;
-  });
+  }).filter(row => Object.keys(row).length > 0 && Object.values(row).some(v => v !== null && v !== ''));
 };
 
 export const getSeedDataFromCSV = () => {

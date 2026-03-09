@@ -1,58 +1,73 @@
-# YANA Ops CRM - Technical Architecture
+
+# YANA Ops CRM - Technical & Operational Architecture
 
 ## 1. Vision & Core Principles
-YANA Ops CRM is a store-first operational OS designed for high-frequency EV fleet management. 
-- **Operational Scoping**: Every data point is isolated by `storeId` but accessible via a global `Admin` context.
-- **Audit-First**: No manual override occurs without a reason and a corresponding entry in the `AuditLog`.
-- **Constraint-Driven**: Prevent "illegal" states (e.g., booking a vehicle that is already in use or in maintenance).
+YANA Ops CRM is a high-performance, store-first operational OS designed for intensive EV fleet management. It bridges the gap between physical "Zap Point" operations and enterprise-level asset tracking.
+
+- **Store-First Scoping**: Data is natively isolated by `store_id`. Operators manage their specific location while Admins retain a "Global Network" view.
+- **Audit-First Integrity**: Every manual override (status changes, master edits) requires a mandatory reason and generates an immutable `audit_logs` entry.
+- **Revenue Protection Protocol**: Integrated financial gates prevent asset release without meeting specific collection thresholds.
+- **Physical-Digital Synchronization**: Reflects the real-world state of hardware (Bikes + Batteries) in real-time using Supabase.
 
 ---
 
-## 2. Domain Model (Data Structures)
+## 2. Domain Model (Database Alignment)
 
-### 2.1 Core Entities (`types.ts`)
-| Entity | Key Properties | Purpose |
+### 2.1 Core Entities & Schema Mapping
+| Frontend Entity | Database Table | Key Attributes (DB Name) |
 | :--- | :--- | :--- |
-| **Store** | `id`, `name`, `targetRentals` | The physical hub. Includes performance goals set by Admin. |
-| **Vehicle** | `id`, `storeId`, `status`, `plateNumber` | The physical EV asset. Tracked in the Master Fleet Registry. |
-| **Battery** | `id`, `storeId`, `serialNumber` | The power asset. Tracked in the Master Fleet Registry. |
-| **Customer** | `id`, `kycStatus`, `phone`, `aadharNo` | The Rider/Subscriber. Includes full PII from Requisition form. |
-| **Booking** | `id`, `expectedEndDate`, `amountPaid` | The central transaction record. Handles lifecycle and overdue logic. |
+| **Store** | `stores` | `store_id` (PK), `name`, `location`, `state_name`, `target_rentals` |
+| **Vehicle** | `vehicles` | `id` (PK), `store_id`, `plate_number`, `status`, `assigned_battery_id` |
+| **Battery** | `batteries` | `id` (PK), `store_id`, `serial_number`, `status`, `assigned_vehicle_id` |
+| **Customer** | `customers` | `id` (PK), `store_id`, `name`, `phone`, `aadhar_no`, `pan_no`, `bank_name`, `account_number`, `kyc_status` |
+| **Booking** | `bookings` | `id` (PK), `customer_id`, `vehicle_id`, `status`, `rental_plan`, `total_amount`, `amount_paid`, `is_settled` |
+| **Maintenance**| `maintenance_jobs` | `id` (PK), `vehicle_id`, `status`, `description`, `resolution_notes` |
 
 ---
 
-## 3. State Management (`useYanaData.ts`)
+## 3. Technical Stack & State Management
 
-### 3.1 Central State Tree
-The state is managed in a single object `YanaState` and persisted to `localStorage` under `yana_ops_v1_state`.
-- **Hydration**: System seeds data from CSV strings (including Rental Targets) on first load.
-- **Store Target Logic**: Admins define `targetRentals` per store to drive localized operational focus.
+### 3.1 Backend: Supabase
+The application communicates directly with Supabase via `@supabase/supabase-js`.
+- **Row Level Security (RLS)**: Expected to be handled at the database level.
+- **Real-time Sync**: Uses Postgres Channels to listen for changes and re-hydrate the frontend state instantly.
 
----
-
-## 4. Operational Logic & Algorithms
-
-### 4.1 Performance KPIs (Operator Dashboard)
-- **Rent Ratio**: Actual `ACTIVE` bookings vs `Store.targetRentals`.
-- **Idle Count**: Count of vehicles where `status === AVAILABLE`.
-- **Overdue Detection**: Calculated as `now - Booking.expectedEndDate`. Triggers UI alerts in Ops Portal.
-- **Pending Collection**: Count of records where `balance > 0 && !isSettled`.
-
-### 4.2 Financial Settlement & Tax Logic
-- **GST Calculation**: A configurable `gstPercentage` (e.g., 18%) is applied only to base rental rates.
-- **Security Deposit**: Exempt from GST. Tracked separately in settlements.
+### 3.2 Frontend: React & custom hooks
+The `useYanaData` hook serves as the "Controller," managing:
+- **CamelCase Mapping**: Automatically translates between database `snake_case` and frontend `camelCase`.
+- **Virtual Calculation**: Since the `bookings` schema lacks a dedicated `expected_return_date` column, the frontend dynamically computes it based on `started_at` + `rental_plan` duration (7 or 30 days).
 
 ---
 
-## 5. Portals & Permissions
-- **Admin**: Configures Store targets, global tax rates, and handles asset migration.
-- **Operator**: Uses the **Overview Dashboard** to track daily goals, return dates, and stock levels.
-- **Rider**: Profile management and Onboarding Wizard.
+## 4. Operational Guardrails & Business Logic
+
+### 4.1 The "Revenue Protection Gate"
+To ensure cash-flow stability and asset security, the system enforces a strict dispatch barrier based on the rental duration:
+- **Weekly Plans**: Require **100% Payment** (Rent + Deposit + Fines) before dispatch.
+- **Monthly Plans**: Require **50% Payment** (Rent + Deposit + Fines) before dispatch.
+- **UI Feedback**: The progress bar in the Operator Portal turns amber/red if the specific threshold is not met, locking the "Dispatch" action.
+
+### 4.2 Auto-Pausing & Liability
+- **Logic**: During a **Vehicle Swap**, if damage is recorded, the fine is added to `fines_amount`.
+- **System Action**: If the new total liability reduces the rider's paid coverage below the plan's threshold (100% for Weekly / 50% for Monthly), the booking is automatically set to `PAUSED`. The operator is prompted to collect the difference immediately.
+
+### 4.3 Checklist-Driven Inspection
+Inspection is strictly structured. Specific checklist items (e.g., "Fan", "Wheel Puncture", "Key Missing") have standardized fine values. Selecting these during return updates the `fines_amount` and the `checklist` JSON array in the database.
 
 ---
 
-## 8. Onboarding Wizard (PDF Alignment)
-- **Section A**: Personal Identity.
-- **Documents**: Statutory IDs (Aadhar/PAN) and Emergency contacts.
-- **Schedule**: Operational subscription window.
-- **Legal (Section B & C)**: Explicit privacy and SOP consent tracking.
+## 5. Financial Settlement & Tax
+- **GST Logic**: Applied to base rental plans (Weekly/Monthly) as defined in `global_config`.
+- **Security Deposit**: Handled as a non-taxable liability.
+- **Settlement Lifecycle**: 
+  1. **Return**: Ride marked `COMPLETED`. Fleet assets return to `AVAILABLE`.
+  2. **Clearance Ticket**: A "Settlement Ticket" stays open until `is_settled` is true.
+  3. **Refund Calculation**: `Deposit - Fines`. 
+  4. **Closure**: Store Admin confirms physical refund and marks the record `is_settled = true`.
+
+---
+
+## 6. Portal Access Matrix
+- **Admin**: Full terminal configuration, global pricing, asset migration between stores, and bulk data imports.
+- **Operator**: Store-level fleet control, rider dispatch, damage assessment, and cash collection.
+- **Rider**: Mobile-first portal for self-onboarding, tracking current rides, and viewing settlement banking details.
