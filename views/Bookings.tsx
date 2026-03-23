@@ -64,7 +64,7 @@ const Bookings: React.FC<BookingsProps> = ({
     switch (s) {
       case BookingStatus.ACTIVE: return 'success';
       case BookingStatus.PAUSED: return 'warning';
-      case BookingStatus.DRAFT: return 'neutral';
+      case BookingStatus.PENDING: return 'neutral';
       case BookingStatus.COMPLETED: return 'info';
       case BookingStatus.CANCELLED: return 'error';
     }
@@ -143,7 +143,7 @@ const Bookings: React.FC<BookingsProps> = ({
       {/* 2. Active/Draft Bookings Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {storeBookings.length > 0 ? (
-          storeBookings.filter(b => [BookingStatus.ACTIVE, BookingStatus.DRAFT, BookingStatus.PAUSED].includes(b.status)).map(booking => {
+          storeBookings.filter(b => [BookingStatus.ACTIVE, BookingStatus.PENDING, BookingStatus.PAUSED].includes(b.status)).map(booking => {
             const customer = state.customers.find(c => c.id === booking.customerId);
             const vehicle = state.vehicles.find(v => v.id === booking.vehicleId);
             return (
@@ -174,7 +174,7 @@ const Bookings: React.FC<BookingsProps> = ({
                 </div>
 
                 <div className="flex space-x-2 pt-4 border-t border-gray-100">
-                  {booking.status === BookingStatus.DRAFT && (
+                  {booking.status === BookingStatus.PENDING && (
                     <button 
                       onClick={() => onStart(booking.id)}
                       className="flex-1 flex items-center justify-center space-x-2 py-2 bg-emerald-600 text-white rounded-lg font-bold hover:bg-emerald-700 transition-colors shadow-md"

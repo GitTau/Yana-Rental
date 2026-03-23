@@ -62,7 +62,10 @@ export const Modal: React.FC<{
           <div className="px-5 lg:px-6 py-4 lg:py-5 bg-slate-50 border-t border-slate-100 flex justify-end space-x-3">
             <button onClick={onClose} className="px-5 py-2 text-xs lg:text-sm font-bold text-slate-500 hover:text-slate-800 transition-standard">Cancel</button>
             <button 
-              onClick={() => { onConfirm(); onClose(); }} 
+              onClick={async () => { 
+                await onConfirm(); 
+                onClose(); 
+              }} 
               className="px-6 lg:px-8 py-2 lg:py-2.5 bg-[#00eaff] text-black text-xs lg:text-sm font-black rounded-xl hover:shadow-lg hover:shadow-cyan-400/20 transition-standard active:scale-95"
             >
               {confirmLabel}

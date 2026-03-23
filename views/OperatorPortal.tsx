@@ -142,6 +142,7 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
 
   const availableVehicles = storeVehicles.filter(v => v.status === VehicleStatus.AVAILABLE);
   const availableBatteries = storeBatteries.filter(b => b.status === BatteryStatus.AVAILABLE);
+  const allAvailableBatteries = state.batteries.filter(b => b.status === BatteryStatus.AVAILABLE);
   const inactiveVehicles = storeVehicles.filter(v => v.status === VehicleStatus.MAINTENANCE || v.status === VehicleStatus.INACTIVE);
   const inactiveBatteries = storeBatteries.filter(b => b.status === BatteryStatus.MAINTENANCE);
 
@@ -1169,10 +1170,19 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
                  onChange={setNewAssetId} 
                  options={[
                    { value: "", label: "-- Choose Asset --" }, 
-                   ...(swapType === 'vehicle' ? availableVehicles.map(v => ({ value: v.id, label: v.plateNumber })) : availableBatteries.map(b => ({ value: b.id, label: b.serialNumber })))
+                   ...(swapType === 'vehicle' 
+                     ? availableVehicles.map(v => ({ value: v.id, label: v.plateNumber })) 
+                     : allAvailableBatteries.map(b => {
+                         const store = state.stores.find(s => s.id === b.storeId);
+                         return { value: b.id, label: `${b.serialNumber} (${store?.name || 'Unknown'})` };
+                       }))
                  ]} 
                />
-               <span className="text-xs text-slate-400 italic">Only available assets in current store are listed.</span>
+               <span className="text-xs text-slate-400 italic">
+                 {swapType === 'vehicle' 
+                   ? 'Only available assets in current store are listed.' 
+                   : 'Available batteries from all stores are listed. Selecting from another store will migrate it.'}
+               </span>
                <TextArea label="Reason" value={swapReason} onChange={setSwapReason} placeholder="Maintenance, puncture, etc." />
                <div className="flex justify-end pt-2 border-t border-slate-100">
                   <button onClick={handleSwapConfirm} className="px-6 py-2 bg-[#00eaff] text-black text-xs font-black rounded-xl active:scale-95 transition-all">Next</button>

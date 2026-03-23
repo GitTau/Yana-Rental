@@ -103,7 +103,7 @@ const RiderPortal: React.FC<RiderPortalProps> = ({ state, onBook, onOnboard }) =
   );
 
   const activeBooking = useMemo(() => 
-    riderBookings.find(b => [BookingStatus.ACTIVE, BookingStatus.DRAFT, BookingStatus.PAUSED].includes(b.status)),
+    riderBookings.find(b => [BookingStatus.ACTIVE, BookingStatus.PENDING, BookingStatus.PAUSED].includes(b.status)),
     [riderBookings]
   );
 
@@ -119,7 +119,7 @@ const RiderPortal: React.FC<RiderPortalProps> = ({ state, onBook, onOnboard }) =
     switch (s) {
       case BookingStatus.ACTIVE: return <RefreshCcw size={14} className="text-emerald-500 animate-spin-slow" />;
       case BookingStatus.PAUSED: return <Clock size={14} className="text-amber-500" />;
-      case BookingStatus.DRAFT: return <Info size={14} className="text-blue-500" />;
+      case BookingStatus.PENDING: return <Info size={14} className="text-blue-500" />;
       case BookingStatus.COMPLETED: return <CheckCircle2 size={14} className="text-gray-400" />;
       default: return null;
     }
@@ -340,7 +340,7 @@ const RiderPortal: React.FC<RiderPortalProps> = ({ state, onBook, onOnboard }) =
                          </div>
                          <div className="flex items-center gap-2">
                             {getStatusIcon(b.status)}
-                            <Badge variant={b.status === BookingStatus.ACTIVE ? 'success' : b.status === BookingStatus.DRAFT ? 'info' : 'neutral'}>{b.status}</Badge>
+                            <Badge variant={b.status === BookingStatus.ACTIVE ? 'success' : b.status === BookingStatus.PENDING ? 'info' : 'neutral'}>{b.status}</Badge>
                          </div>
                       </div>
 

@@ -19,7 +19,7 @@ export enum BatteryStatus {
 }
 
 export enum BookingStatus {
-  DRAFT = 'Draft',
+  PENDING = 'Pending',
   ACTIVE = 'Active',
   PAUSED = 'Paused',
   COMPLETED = 'Completed',

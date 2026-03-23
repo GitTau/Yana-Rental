@@ -32,7 +32,7 @@ const AdminBookings: React.FC<AdminBookingsProps> = ({ state, onUpdateBooking })
   const [selectedBookingId, setSelectedBookingId] = useState<string | null>(null);
   
   const [isEditing, setIsEditing] = useState(false);
-  const [editStatus, setEditStatus] = useState<BookingStatus>(BookingStatus.DRAFT);
+  const [editStatus, setEditStatus] = useState<BookingStatus>(BookingStatus.PENDING);
   const [editNotes, setEditNotes] = useState('');
   const [editReason, setEditReason] = useState('');
 
@@ -63,7 +63,7 @@ const AdminBookings: React.FC<AdminBookingsProps> = ({ state, onUpdateBooking })
       case BookingStatus.ACTIVE: return 'success';
       case BookingStatus.PAUSED: return 'warning';
       case BookingStatus.COMPLETED: return 'info';
-      case BookingStatus.DRAFT: return 'neutral';
+      case BookingStatus.PENDING: return 'neutral';
       case BookingStatus.CANCELLED: return 'error';
     }
   };

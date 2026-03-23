@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useYanaData } from './hooks/useYanaData';
+import { useAuth } from './hooks/useAuth';
 import Layout from './components/Layout';
 import Dashboard from './views/Dashboard';
 import Vehicles from './views/Vehicles';
@@ -14,15 +15,28 @@ import OperatorPortal from './views/OperatorPortal';
 import RiderPortal from './views/RiderPortal';
 import Financials from './views/Financials';
 import AdminBookings from './views/AdminBookings';
+import { AuthView } from './views/AuthView';
 import { UserRole } from './types';
 
 const App: React.FC = () => {
+  const { user, isLoading: isAuthLoading, logout } = useAuth();
   const [currentRole, setCurrentRole] = useState<UserRole>(UserRole.ADMIN);
   const [currentView, setCurrentView] = useState('dashboard');
   const yana = useYanaData();
 
   const { stores, activeStoreId } = yana.state;
   const { switchStore } = yana;
+
+  useEffect(() => {
+    if (user) {
+      const role = user.role === 'admin' ? UserRole.ADMIN : UserRole.OPERATOR;
+      setCurrentRole(role);
+      
+      if (user.storeId && activeStoreId === 'all') {
+        switchStore(user.storeId);
+      }
+    }
+  }, [user, activeStoreId, switchStore]);
 
   useEffect(() => {
     if (!stores || stores.length === 0) return;
@@ -39,6 +53,18 @@ const App: React.FC = () => {
       }
     }
   }, [currentRole, currentView, activeStoreId, stores, switchStore]);
+
+  if (isAuthLoading) {
+    return (
+      <div className="min-h-screen bg-[#F5F5F0] flex items-center justify-center">
+        <div className="w-8 h-8 border-4 border-black border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <AuthView />;
+  }
 
   const renderView = () => {
     if (yana.isLoading && stores.length === 0) {
@@ -121,6 +147,8 @@ const App: React.FC = () => {
       setCurrentView={setCurrentView}
       currentRole={currentRole}
       setCurrentRole={setCurrentRole}
+      user={user}
+      onLogout={logout}
     >
       {renderView()}
     </Layout>

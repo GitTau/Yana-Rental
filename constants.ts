@@ -60,7 +60,7 @@ export const parseCSV = <T>(csv: string): T[] => {
   
   return lines.slice(1).map(line => {
     // Regex to handle commas inside quotes
-    const values = line.match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g) || line.split(',');
+    const values = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/);
     const obj: any = {};
     headers.forEach((header, index) => {
       let val: any = values[index]?.trim().replace(/^"|"$/g, '');

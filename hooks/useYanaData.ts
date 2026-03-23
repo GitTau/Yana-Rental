@@ -447,10 +447,11 @@ export const useYanaData = () => {
     },
     swapBattery: async (bId: string, batId: string, r: string, m: boolean) => {
       const b = state.bookings.find(x => x.id === bId);
+      if (!b) return;
       await Promise.all([
         supabase.from('bookings').update({ battery_id: batId }).eq('id', bId),
-        b?.batteryId ? supabase.from('batteries').update({ status: m ? BatteryStatus.MAINTENANCE : BatteryStatus.AVAILABLE }).eq('id', b.batteryId) : Promise.resolve(),
-        supabase.from('batteries').update({ status: BatteryStatus.IN_USE }).eq('id', batId)
+        b.batteryId ? supabase.from('batteries').update({ status: m ? BatteryStatus.MAINTENANCE : BatteryStatus.AVAILABLE }).eq('id', b.batteryId) : Promise.resolve(),
+        supabase.from('batteries').update({ status: BatteryStatus.IN_USE, store_id: b.storeId }).eq('id', batId)
       ]);
       fetchData();
     },

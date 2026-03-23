@@ -42,19 +42,19 @@ import { parseCSV } from '../constants';
 
 const AdminStoreManagement: React.FC<{ 
   state: YanaState, 
-  onCreate: (s: Omit<Store, 'id'>) => void,
-  onUpdateStore?: (id: string, updates: Partial<Store>) => void,
-  onDeleteStore?: (id: string) => void,
-  onUpdateRates: (rates: RentalRates) => void,
-  onMigrate: (type: 'vehicle' | 'battery' | 'customer', id: string, targetStoreId: string) => void,
-  onBulkStores: (s: any[]) => void,
-  onBulkVehicles: (v: any[]) => void,
-  onBulkBatteries: (b: any[]) => void,
-  onBulkCustomers: (c: any[]) => void,
-  onUpdateVehicle?: (id: string, updates: Partial<Vehicle>) => void,
-  onUpdateBattery?: (id: string, updates: Partial<Battery>) => void,
-  onUpdateCustomer?: (id: string, updates: Partial<Customer>) => void,
-  onDeleteCustomer?: (id: string) => void,
+  onCreate: (s: Omit<Store, 'id'>) => Promise<void>,
+  onUpdateStore?: (id: string, updates: Partial<Store>) => Promise<void>,
+  onDeleteStore?: (id: string) => Promise<void>,
+  onUpdateRates: (rates: RentalRates) => Promise<void>,
+  onMigrate: (type: 'vehicle' | 'battery' | 'customer', id: string, targetStoreId: string) => Promise<void>,
+  onBulkStores: (s: any[]) => Promise<void>,
+  onBulkVehicles: (v: any[]) => Promise<void>,
+  onBulkBatteries: (b: any[]) => Promise<void>,
+  onBulkCustomers: (c: any[]) => Promise<void>,
+  onUpdateVehicle?: (id: string, updates: Partial<Vehicle>) => Promise<void>,
+  onUpdateBattery?: (id: string, updates: Partial<Battery>) => Promise<void>,
+  onUpdateCustomer?: (id: string, updates: Partial<Customer>) => Promise<void>,
+  onDeleteCustomer?: (id: string) => Promise<void>,
 }> = ({ 
   state, onCreate, onUpdateStore, onDeleteStore, onUpdateRates, onMigrate, 
   onBulkStores, onBulkVehicles, onBulkBatteries, onBulkCustomers, 
@@ -111,6 +111,9 @@ const AdminStoreManagement: React.FC<{
       setIsCreating(false);
       setName('');
       setLocation('');
+    } catch (err: any) {
+      console.error("Failed to create store:", err);
+      alert(`Error: ${err.message || "Could not create Zap Point. Check console for details."}`);
     } finally {
       setIsSubmitting(false);
     }
@@ -395,6 +398,16 @@ const AdminStoreManagement: React.FC<{
                           </td>
                           <td className="px-6 py-4 text-right">
                              <div className="flex justify-end gap-2">
+                                {!rider.kycStatus && (
+                                   <button 
+                                     onClick={() => onUpdateCustomer?.(rider.id, { kycStatus: true })}
+                                     className="p-2 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-600 hover:bg-emerald-100 transition-all flex items-center gap-1.5"
+                                     title="Approve KYC"
+                                   >
+                                      <CheckCircle2 size={16}/>
+                                      <span className="text-[9px] font-black uppercase">Approve</span>
+                                   </button>
+                                )}
                                 <button onClick={() => openEditModal(rider, 'rider')} className="p-2 bg-white border border-slate-200 rounded-xl text-indigo-600 hover:border-indigo-400 hover:bg-indigo-50 transition-all"><Edit size={16}/></button>
                                 <button onClick={() => setIsDeletingRider(rider.id)} className="p-2 bg-white border border-slate-200 rounded-xl text-rose-500 hover:border-rose-400 hover:bg-rose-50 transition-all"><Trash2 size={16}/></button>
                              </div>

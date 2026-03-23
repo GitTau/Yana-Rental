@@ -16,7 +16,8 @@ import {
   ShieldCheck,
   Globe,
   Wallet,
-  Smartphone
+  Smartphone,
+  LogOut
 } from 'lucide-react';
 import { Store, UserRole } from '../types';
 
@@ -30,6 +31,8 @@ interface LayoutProps {
   setCurrentView: (view: string) => void;
   currentRole: UserRole;
   setCurrentRole: (role: UserRole) => void;
+  user?: { name: string; email: string; role: string } | null;
+  onLogout?: () => void;
 }
 
 const Layout: React.FC<LayoutProps> = ({ 
@@ -41,7 +44,9 @@ const Layout: React.FC<LayoutProps> = ({
   currentView,
   setCurrentView,
   currentRole,
-  setCurrentRole
+  setCurrentRole,
+  user,
+  onLogout
 }) => {
   const activeStore = activeStoreId === 'all' ? { name: 'Global Fleet', location: 'System Wide', state: 'Multiple' } : stores.find(s => s.id === activeStoreId);
   const isAdmin = currentRole === UserRole.ADMIN;
@@ -181,6 +186,22 @@ const Layout: React.FC<LayoutProps> = ({
                 <span>Rider</span>
               </button>
             </div>
+
+            {user && (
+              <div className="flex items-center space-x-3 pl-4 border-l border-slate-200">
+                <div className="hidden sm:block text-right">
+                  <p className="text-[10px] font-black text-slate-900 uppercase tracking-tight">{user.name}</p>
+                  <p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">{user.role}</p>
+                </div>
+                <button 
+                  onClick={onLogout}
+                  className="p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all"
+                  title="Logout"
+                >
+                  <LogOut size={18} />
+                </button>
+              </div>
+            )}
           </div>
         </header>
 
