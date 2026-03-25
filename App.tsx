@@ -29,7 +29,7 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (user) {
-      const role = user.role === 'admin' ? UserRole.ADMIN : UserRole.OPERATOR;
+      const role = user.role === 'admin' ? UserRole.ADMIN : user.role === 'rider' ? UserRole.RIDER : UserRole.OPERATOR;
       setCurrentRole(role);
       
       if (user.storeId && activeStoreId === 'all') {
