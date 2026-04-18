@@ -44,12 +44,12 @@ The `useYanaData` hook serves as the "Controller," managing:
 ### 4.1 The "Revenue Protection Gate"
 To ensure cash-flow stability and asset security, the system enforces a strict dispatch barrier based on the rental duration:
 - **Weekly Plans**: Require **100% Payment** (Rent + Deposit + Fines) before dispatch.
-- **Monthly Plans**: Require **50% Payment** (Rent + Deposit + Fines) before dispatch.
+- **Monthly Plans**: Require **Flat ₹4000 Payment** before dispatch.
 - **UI Feedback**: The progress bar in the Operator Portal turns amber/red if the specific threshold is not met, locking the "Dispatch" action.
 
 ### 4.2 Auto-Pausing & Liability
 - **Logic**: During a **Vehicle Swap**, if damage is recorded, the fine is added to `fines_amount`.
-- **System Action**: If the new total liability reduces the rider's paid coverage below the plan's threshold (100% for Weekly / 50% for Monthly), the booking is automatically set to `PAUSED`. The operator is prompted to collect the difference immediately.
+- **System Action**: If the new total liability reduces the rider's paid coverage below the plan's threshold (100% for Weekly / Flat ₹4000 for Monthly), the booking is automatically set to `PAUSED`. The operator is prompted to collect the difference immediately.
 
 ### 4.3 Checklist-Driven Inspection
 Inspection is strictly structured. Specific checklist items (e.g., "Fan", "Wheel Puncture", "Key Missing") have standardized fine values. Selecting these during return updates the `fines_amount` and the `checklist` JSON array in the database.

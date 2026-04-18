@@ -44,6 +44,16 @@ const normalizeBatteryStatus = (status: string | null): BatteryStatus => {
   return BatteryStatus.AVAILABLE;
 };
 
+const normalizeBookingStatus = (status: string | null): BookingStatus => {
+  if (!status) return BookingStatus.PENDING;
+  const s = status.toLowerCase().trim();
+  if (s === 'active') return BookingStatus.ACTIVE;
+  if (s === 'paused') return BookingStatus.PAUSED;
+  if (s === 'completed') return BookingStatus.COMPLETED;
+  if (s === 'cancelled') return BookingStatus.CANCELLED;
+  return BookingStatus.PENDING;
+};
+
 export const useYanaData = () => {
   const [state, setState] = useState<YanaState>({
     stores: [],
@@ -150,7 +160,7 @@ export const useYanaData = () => {
       vehicleId: b.vehicle_id,
       batteryId: b.battery_id,
       storeId: b.store_id,
-      status: b.status as BookingStatus,
+      status: normalizeBookingStatus(b.status),
       createdAt,
       startedAt,
       pausedAt: b.paused_at ? new Date(b.paused_at).getTime() : undefined,
@@ -313,7 +323,7 @@ export const useYanaData = () => {
       
       const isoStartDate = new Date(startDateTs).toISOString();
       
-      await supabase.from('bookings').insert([{
+      const { error } = await supabase.from('bookings').insert([{
         customer_id: customerId,
         vehicle_id: vehicleId,
         battery_id: batteryId,
@@ -323,6 +333,10 @@ export const useYanaData = () => {
         deposit_amount: state.rentalRates.securityDeposit,
         created_at: isoStartDate
       }]);
+      if (error) {
+        console.error("Error creating booking:", error);
+        alert("Failed to create booking: " + error.message);
+      }
       fetchData();
     },
     recordPayment: async (id: string, amount: number) => {
@@ -438,20 +452,22 @@ export const useYanaData = () => {
     },
     swapVehicle: async (bId: string, vId: string, r: string, m: boolean, f: number, c: string[]) => {
       const b = state.bookings.find(x => x.id === bId);
+      const isPending = b?.status === BookingStatus.PENDING;
       await Promise.all([
         supabase.from('bookings').update({ vehicle_id: vId, fines_amount: (b?.finesAmount || 0) + f, checklist: [...(b?.checklist || []), ...c] }).eq('id', bId),
         b?.vehicleId ? supabase.from('vehicles').update({ status: m ? VehicleStatus.MAINTENANCE : VehicleStatus.AVAILABLE }).eq('id', b.vehicleId) : Promise.resolve(),
-        supabase.from('vehicles').update({ status: VehicleStatus.IN_USE }).eq('id', vId)
+        supabase.from('vehicles').update({ status: isPending ? VehicleStatus.AVAILABLE : VehicleStatus.IN_USE }).eq('id', vId)
       ]);
       fetchData();
     },
     swapBattery: async (bId: string, batId: string, r: string, m: boolean) => {
       const b = state.bookings.find(x => x.id === bId);
       if (!b) return;
+      const isPending = b.status === BookingStatus.PENDING;
       await Promise.all([
         supabase.from('bookings').update({ battery_id: batId }).eq('id', bId),
         b.batteryId ? supabase.from('batteries').update({ status: m ? BatteryStatus.MAINTENANCE : BatteryStatus.AVAILABLE }).eq('id', b.batteryId) : Promise.resolve(),
-        supabase.from('batteries').update({ status: BatteryStatus.IN_USE, store_id: b.storeId }).eq('id', batId)
+        supabase.from('batteries').update({ status: isPending ? BatteryStatus.AVAILABLE : BatteryStatus.IN_USE, store_id: b.storeId }).eq('id', batId)
       ]);
       fetchData();
     },

@@ -21,7 +21,8 @@ import {
   ShieldCheck,
   Tag,
   Receipt,
-  Timer
+  Timer,
+  Activity
 } from 'lucide-react';
 import { YanaState, Booking, BookingStatus, RentalPlan } from '../types';
 import { Card, Badge, Modal } from '../components/Common';
@@ -54,6 +55,7 @@ interface FinancialsProps {
 }
 
 const Financials: React.FC<FinancialsProps> = ({ state, onRecordPayment, onMarkSettled }) => {
+  const [activeTab, setActiveTab] = useState<'revenue' | 'security'>('revenue');
   const [detailBookingId, setDetailBookingId] = useState<string | null>(null);
   const [paymentBookingId, setPaymentBookingId] = useState<string | null>(null);
   
@@ -83,7 +85,7 @@ const Financials: React.FC<FinancialsProps> = ({ state, onRecordPayment, onMarkS
       extensionFines = overdueDays > 1 ? overdueDays * DAILY_EXTENSION_FINE : 0;
     }
     
-    const totalDue = totalAmount + depositAmount + finesAmount + extensionFines;
+    const totalDue = Math.round((totalAmount + depositAmount + finesAmount + extensionFines) / 10) * 10;
     const paid = Number(booking.amountPaid || 0);
     const balance = totalDue - paid;
     
@@ -96,7 +98,42 @@ const Financials: React.FC<FinancialsProps> = ({ state, onRecordPayment, onMarkS
   const collections = filteredBookings.filter(b => getPaymentStatus(b).isPendingCollection);
   const clearanceTickets = filteredBookings.filter(b => getPaymentStatus(b).isClearanceTicket);
 
-  const totalReceivable = collections.reduce((sum, b) => sum + getPaymentStatus(b).balance, 0);
+  const totalReceivable = collections.reduce((sum, b) => {
+    const stats = getPaymentStatus(b);
+    const deposit = Number(b.depositAmount || 0);
+    const paid = Number(b.amountPaid || 0);
+    const depositCollected = Math.min(paid, deposit);
+    const depositPending = deposit - depositCollected;
+    const revenueOutstanding = stats.balance - depositPending;
+    return sum + (revenueOutstanding > 0 ? revenueOutstanding : 0);
+  }, 0);
+
+  const securityMetrics = useMemo(() => {
+    let refunded = 0;
+    let held = 0;
+    let toBeCollected = 0;
+    let pendingRefund = 0;
+
+    filteredBookings.forEach(b => {
+      const deposit = Number(b.depositAmount || 0);
+      const paid = Number(b.amountPaid || 0);
+      const depositCollected = Math.min(paid, deposit);
+      const depositPending = deposit - depositCollected;
+
+      if (b.isSettled) {
+        refunded += depositCollected;
+      } else {
+        if (b.status === BookingStatus.COMPLETED) {
+          pendingRefund += depositCollected;
+        } else {
+          held += depositCollected;
+          toBeCollected += depositPending;
+        }
+      }
+    });
+
+    return { refunded, held, toBeCollected, pendingRefund };
+  }, [filteredBookings]);
 
   const selectedBooking = useMemo(() => 
     state.bookings.find(b => b.id === detailBookingId), 
@@ -129,7 +166,23 @@ const Financials: React.FC<FinancialsProps> = ({ state, onRecordPayment, onMarkS
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+      <div className="flex gap-2 bg-slate-100 p-1 rounded-xl border border-slate-200 w-fit">
+        <button 
+          onClick={() => setActiveTab('revenue')}
+          className={`px-4 py-2 text-xs font-black uppercase tracking-widest rounded-lg transition-all ${activeTab === 'revenue' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+        >
+          Revenue & Collections
+        </button>
+        <button 
+          onClick={() => setActiveTab('security')}
+          className={`px-4 py-2 text-xs font-black uppercase tracking-widest rounded-lg transition-all ${activeTab === 'security' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+        >
+          Security Deposits
+        </button>
+      </div>
+
+      {activeTab === 'revenue' && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         {/* Collections Queue */}
         <div className="space-y-4">
           <div className="flex items-center justify-between px-2">
@@ -164,9 +217,20 @@ const Financials: React.FC<FinancialsProps> = ({ state, onRecordPayment, onMarkS
                       </div>
                    </div>
                    <div className="text-right flex items-center gap-6">
-                      <div>
+                      <div className="flex flex-col items-end">
                         <p className="text-lg font-black text-amber-600 leading-none">₹{status.balance}</p>
                         <p className="text-[9px] font-bold text-gray-400 uppercase mt-1">Due Now</p>
+                        {(() => {
+                          const deposit = Number(b.depositAmount || 0);
+                          const paid = Number(b.amountPaid || 0);
+                          const depositCollected = Math.min(paid, deposit);
+                          const depositPending = deposit - depositCollected;
+                          return depositPending > 0 ? (
+                            <span className="text-[8px] font-bold text-slate-400 uppercase mt-0.5">
+                              Inc. ₹{depositPending} Sec
+                            </span>
+                          ) : null;
+                        })()}
                       </div>
                       <ChevronRight size={20} className="text-gray-300 group-hover:text-amber-500 transition-all" />
                    </div>
@@ -230,6 +294,94 @@ const Financials: React.FC<FinancialsProps> = ({ state, onRecordPayment, onMarkS
           </div>
         </div>
       </div>
+      )}
+
+      {activeTab === 'security' && (
+        <div className="space-y-8 animate-in fade-in duration-500">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm flex flex-col justify-between">
+              <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">Total Held</span>
+              <span className="text-3xl font-black text-gray-900 mt-2">₹{securityMetrics.held}</span>
+              <span className="text-xs text-gray-500 mt-1">Currently with company</span>
+            </div>
+            <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm flex flex-col justify-between">
+              <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">To Be Collected</span>
+              <span className="text-3xl font-black text-amber-600 mt-2">₹{securityMetrics.toBeCollected}</span>
+              <span className="text-xs text-gray-500 mt-1">Pending from active rides</span>
+            </div>
+            <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm flex flex-col justify-between">
+              <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">Pending Refund</span>
+              <span className="text-3xl font-black text-[#0891b2] mt-2">₹{securityMetrics.pendingRefund}</span>
+              <span className="text-xs text-gray-500 mt-1">Awaiting clearance</span>
+            </div>
+            <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm flex flex-col justify-between">
+              <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">Total Refunded</span>
+              <span className="text-3xl font-black text-emerald-600 mt-2">₹{securityMetrics.refunded}</span>
+              <span className="text-xs text-gray-500 mt-1">Settled & returned</span>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2">
+              <Activity size={16} className="text-blue-500" />
+              Security Deposit Ledger
+            </h3>
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+              <table className="w-full text-sm text-left">
+                <thead className="bg-gray-50 text-xs uppercase text-gray-500 font-bold tracking-wider">
+                  <tr>
+                    <th className="px-6 py-4">Rider</th>
+                    <th className="px-6 py-4">Status</th>
+                    <th className="px-6 py-4 text-right">Deposit Expected</th>
+                    <th className="px-6 py-4 text-right">Deposit Collected</th>
+                    <th className="px-6 py-4 text-right">Pending/Refundable</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {filteredBookings.map(b => {
+                    const cust = state.customers.find(c => c.id === b.customerId);
+                    const deposit = Number(b.depositAmount || 0);
+                    const paid = Number(b.amountPaid || 0);
+                    const depositCollected = Math.min(paid, deposit);
+                    const depositPending = deposit - depositCollected;
+                    
+                    let statusBadge = <Badge variant="neutral">Unknown</Badge>;
+                    let amountCol = <span className="text-gray-500">-</span>;
+
+                    if (b.isSettled) {
+                      statusBadge = <Badge variant="success">Settled</Badge>;
+                      amountCol = <span className="text-emerald-600 font-bold">Refunded/Adjusted</span>;
+                    } else if (b.status === BookingStatus.COMPLETED) {
+                      statusBadge = <Badge variant="info">Pending Clearance</Badge>;
+                      amountCol = <span className="text-[#0891b2] font-bold">₹{depositCollected} Refundable</span>;
+                    } else {
+                      statusBadge = <Badge variant="warning">Active</Badge>;
+                      amountCol = depositPending > 0 
+                        ? <span className="text-amber-600 font-bold">₹{depositPending} Pending</span>
+                        : <span className="text-gray-500">Fully Collected</span>;
+                    }
+
+                    return (
+                      <tr key={b.id} className="hover:bg-gray-50 transition-colors">
+                        <td className="px-6 py-4 font-medium text-gray-900">{cust?.name || 'Unknown'}</td>
+                        <td className="px-6 py-4">{statusBadge}</td>
+                        <td className="px-6 py-4 text-right font-mono text-gray-500">₹{deposit}</td>
+                        <td className="px-6 py-4 text-right font-mono text-gray-900">₹{depositCollected}</td>
+                        <td className="px-6 py-4 text-right">{amountCol}</td>
+                      </tr>
+                    );
+                  })}
+                  {filteredBookings.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="px-6 py-8 text-center text-gray-400 italic">No deposit records found</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
 
       <Modal 
         isOpen={!!detailBookingId} 

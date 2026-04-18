@@ -11,6 +11,7 @@ export const AuthView: React.FC = () => {
     login({
       id: 'user-1',
       name: role === 'admin' ? 'Admin User' : role === 'operator' ? 'Operator User' : 'Rider User',
+      email: role === 'admin' ? 'admin@yana.com' : role === 'operator' ? 'operator@yana.com' : 'rider@yana.com',
       role,
       storeId: role !== 'admin' && storeId ? storeId : undefined
     });

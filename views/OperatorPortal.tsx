@@ -63,17 +63,16 @@ const CHECKLIST_ITEMS = [
   { id: 'cp', label: 'Control Panel', fine: 0 },
   { id: 'fan', label: 'Fan', fine: 750 },
   { id: 'bs', label: 'Break Shoe', fine: 0 },
-  { id: 'sc', label: 'Seat Cover', fine: 350 },
-  { id: 'mh', label: 'Motor Hub', fine: 500 },
-  { id: 'ts', label: 'Throttle/Switch', fine: 500 },
-  { id: 'hl', label: 'Horn/Light', fine: 0 },
-  { id: 'bl', label: 'Break Lever', fine: 0 },
-  { id: 'wj', label: 'Wheel jam', fine: 200 },
-  { id: 'wp', label: 'Wheel Puncture', fine: 200 },
-  { id: 'wh', label: 'Wheel Hub', fine: 200 },
+  { id: 'sc', label: 'Seat Problem', fine: 350 },
+  { id: 'mh', label: 'Motor', fine: 500 },
+  { id: 'ts', label: 'Throttle/Switch', fine: 550 },
+  { id: 'hl', label: 'Horn/Light', fine: 300 },
+  { id: 'bl', label: 'Break/Stand/Lever', fine: 500 },
+  { id: 'wj', label: 'Wheel', fine: 500 },
+  { id: 'wp', label: 'Tyre', fine: 0 },
   { id: 'key', label: 'Key Missing/broken', fine: 1000 },
   { id: 'lock', label: 'Lock', fine: 1000 },
-  { id: 'chigory', label: 'Chigory', fine: 500 },
+  { id: 'chigory', label: 'Battery Connector', fine: 500 },
   { id: 'np', label: 'Number Plate', fine: 500 },
   { id: 'dead', label: 'Dead', fine: 1000 },
 ];
@@ -135,10 +134,10 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [rentalSearchQuery, setRentalSearchQuery] = useState('');
 
-  const storeVehicles = state.vehicles.filter(v => v.storeId === state.activeStoreId);
-  const storeBatteries = state.batteries.filter(b => b.storeId === state.activeStoreId);
-  const storeBookings = state.bookings.filter(b => b.storeId === state.activeStoreId);
-  const storeCustomers = state.customers.filter(c => c.storeId === state.activeStoreId);
+  const storeVehicles = state.activeStoreId === 'all' ? state.vehicles : state.vehicles.filter(v => v.storeId === state.activeStoreId);
+  const storeBatteries = state.activeStoreId === 'all' ? state.batteries : state.batteries.filter(b => b.storeId === state.activeStoreId);
+  const storeBookings = state.activeStoreId === 'all' ? state.bookings : state.bookings.filter(b => b.storeId === state.activeStoreId);
+  const storeCustomers = state.activeStoreId === 'all' ? state.customers : state.customers.filter(c => c.storeId === state.activeStoreId);
 
   const availableVehicles = storeVehicles.filter(v => v.status === VehicleStatus.AVAILABLE);
   const availableBatteries = storeBatteries.filter(b => b.status === BatteryStatus.AVAILABLE);
@@ -161,14 +160,14 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
     const gst = (base * state.rentalRates.gstPercentage) / 100;
     const deposit = state.rentalRates.securityDeposit;
     const subtotal = base + gst;
-    const total = subtotal + deposit;
+    const total = Math.round((subtotal + deposit) / 10) * 10;
     return { base, gst, deposit, subtotal, total };
   }, [selectedPlan, state.rentalRates]);
 
   const isCustomerAlreadyBooked = (customerId: string) => {
     return state.bookings.some(b => 
       b.customerId === customerId && 
-      [BookingStatus.DRAFT, BookingStatus.ACTIVE, BookingStatus.PAUSED].includes(b.status)
+      [BookingStatus.PENDING, BookingStatus.ACTIVE, BookingStatus.PAUSED].includes(b.status)
     );
   };
 
@@ -177,7 +176,7 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
     switch (s) {
       case BookingStatus.ACTIVE: return 'success';
       case BookingStatus.PAUSED: return 'warning';
-      case BookingStatus.DRAFT: return 'neutral';
+      case BookingStatus.PENDING: return 'neutral';
       case BookingStatus.COMPLETED: return 'info';
       default: return 'neutral';
     }
@@ -205,7 +204,7 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
     }
     
     const baseDue = totalAmount + depositAmount;
-    const totalDue = baseDue + finesAmount + extensionFines;
+    const totalDue = Math.round((baseDue + finesAmount + extensionFines) / 10) * 10;
     const paid = Number(booking.amountPaid || 0);
     const balance = totalDue - paid;
     
@@ -213,8 +212,7 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
     const isPendingRefund = (booking.status === BookingStatus.COMPLETED || booking.status === BookingStatus.ACTIVE) && balance < 0 && !booking.isSettled;
     
     const isWeekly = booking.rentalPlan === RentalPlan.WEEKLY;
-    const thresholdRatio = isWeekly ? 1.0 : 0.5;
-    const minToStart = totalDue * thresholdRatio;
+    const minToStart = isWeekly ? totalDue : 4000;
     const canStart = paid >= minToStart;
     const coveragePct = totalDue > 0 ? (paid / totalDue) * 100 : 0;
 
@@ -222,7 +220,7 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
       totalDue, paid, balance, canStart, minToStart, 
       isPendingCollection, isPendingRefund, totalAmount, 
       depositAmount, finesAmount, extensionFines, overdueDays,
-      coveragePct, thresholdRatio 
+      coveragePct
     };
   };
 
@@ -235,7 +233,7 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
 
   const filteredRentals = storeBookings.filter(b => {
     if (rentalSubTab === 'live') {
-      if (![BookingStatus.ACTIVE, BookingStatus.DRAFT, BookingStatus.PAUSED].includes(b.status) && b.isSettled) return false;
+      if (![BookingStatus.ACTIVE, BookingStatus.PENDING, BookingStatus.PAUSED].includes(b.status) && b.isSettled) return false;
     }
     
     if (!rentalSearchQuery) return true;
@@ -361,6 +359,22 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
     const target = activeStore?.targetRentals || 0;
     const pendingPaymentsCount = storeBookings.filter(b => getPaymentStatus(b).isPendingCollection).length;
     
+    // Calculate Revenue Realised and Security Deposits
+    const revenueRealised = storeBookings.reduce((sum, b) => {
+      const paid = Number(b.amountPaid || 0);
+      const deposit = Number(b.depositAmount || 0);
+      const depositCollected = Math.min(paid, deposit);
+      const rentalCollected = paid - depositCollected;
+      return sum + rentalCollected;
+    }, 0);
+
+    const securityDepositsHeld = storeBookings.filter(b => [BookingStatus.ACTIVE, BookingStatus.PAUSED, BookingStatus.PENDING].includes(b.status)).reduce((sum, b) => {
+      const paid = Number(b.amountPaid || 0);
+      const deposit = Number(b.depositAmount || 0);
+      const depositCollected = Math.min(paid, deposit);
+      return sum + depositCollected;
+    }, 0);
+
     const now = Date.now();
     const overdueBookings = storeBookings.filter(b => 
       [BookingStatus.ACTIVE, BookingStatus.PAUSED].includes(b.status) && 
@@ -372,7 +386,17 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
       return sum + (days > 1 ? days : 0);
     }, 0);
 
-    return { totalBookings, idleVehicles, vehiclesOnRent, target, pendingPaymentsCount, overdueCount: overdueBookings.length, totalOverdueDays: totalOverdueDaysForFine };
+    return { 
+      totalBookings, 
+      idleVehicles, 
+      vehiclesOnRent, 
+      target, 
+      pendingPaymentsCount, 
+      overdueCount: overdueBookings.length, 
+      totalOverdueDays: totalOverdueDaysForFine,
+      revenueRealised,
+      securityDepositsHeld
+    };
   }, [storeBookings, storeVehicles, state.activeStoreId, state.stores]);
 
   return (
@@ -486,6 +510,23 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
                   </div>
                </div>
             </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 lg:gap-6">
+               <KPIBox 
+                 label="Revenue Realised" 
+                 value={`₹${overviewStats.revenueRealised.toLocaleString()}`} 
+                 icon={<IndianRupee size={20} />} 
+                 color="text-emerald-600" 
+                 bg="bg-emerald-50" 
+               />
+               <KPIBox 
+                 label="Security Deposits Held" 
+                 value={`₹${overviewStats.securityDepositsHeld.toLocaleString()}`} 
+                 icon={<ShieldCheck size={20} />} 
+                 color="text-blue-600" 
+                 bg="bg-blue-50" 
+               />
+            </div>
           </div>
         )}
 
@@ -569,11 +610,11 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
                           <div className="flex items-center gap-1 mb-1">
                             <Badge variant="neutral" className="text-[7px] py-0">{booking.rentalPlan}</Badge>
                             <span className="text-[8px] font-black text-slate-400 uppercase tracking-tighter">
-                              {isWeekly ? '100% Payment Gate' : '50% Payment Gate'}
+                              {isWeekly ? '100% Payment Gate' : 'Flat ₹4000 Gate'}
                             </span>
                           </div>
 
-                          {belowThreshold && (booking.status === BookingStatus.DRAFT || booking.status === BookingStatus.PAUSED || isPastDue) && (
+                          {belowThreshold && (booking.status === BookingStatus.PENDING || booking.status === BookingStatus.PAUSED || isPastDue) && (
                             <div className="p-2.5 rounded-xl border bg-amber-50 border-amber-200 flex flex-col gap-1 shadow-sm">
                                <div className="flex items-center gap-1.5 text-amber-700">
                                   <AlertTriangle size={14} className="animate-pulse" />
@@ -633,7 +674,7 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
                             <button onClick={() => toggleBilling(booking.id)} className="w-full p-2.5 flex justify-between items-center text-[9px] font-black uppercase tracking-widest hover:bg-slate-50">
                                 <div className="flex items-center gap-1.5"><ReceiptText size={10} className="text-slate-400" /><span>Financial Health</span></div>
                                 <div className="flex items-center gap-1.5">
-                                  <span className={pay.coveragePct < (pay.thresholdRatio * 100) ? "text-amber-600" : "text-emerald-600"}>Paid: {Math.round(pay.coveragePct)}%</span>
+                                  <span className={pay.paid < pay.minToStart ? "text-amber-600" : "text-emerald-600"}>Paid: {Math.round(pay.coveragePct)}%</span>
                                   {isExpanded ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
                                 </div>
                             </button>
@@ -648,42 +689,44 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
                               </div>
                             )}
                             <div className="h-1.5 w-full bg-slate-100 relative">
-                               <div className="absolute top-0 w-0.5 h-full bg-slate-400 z-10" style={{ left: `${pay.thresholdRatio * 100}%` }} title={`Dispatch Gate: ${pay.thresholdRatio * 100}%`} />
-                               <div className={`h-full transition-all duration-700 ${pay.coveragePct < (pay.thresholdRatio * 100) ? 'bg-amber-400' : 'bg-[#00eaff]'}`} style={{ width: `${pay.coveragePct}%` }} />
+                               <div className="absolute top-0 w-0.5 h-full bg-slate-400 z-10" style={{ left: `${(pay.minToStart / pay.totalDue) * 100}%` }} title={`Dispatch Gate: ${Math.round((pay.minToStart / pay.totalDue) * 100)}%`} />
+                               <div className={`h-full transition-all duration-700 ${pay.paid < pay.minToStart ? 'bg-amber-400' : 'bg-[#00eaff]'}`} style={{ width: `${pay.coveragePct}%` }} />
                             </div>
                           </div>
                         </div>
 
                         <div className="flex flex-col gap-1.5 mt-4 pt-4 border-t border-gray-50">
-                          {booking.status === BookingStatus.DRAFT && (
-                            <div className="flex gap-1.5">
-                                <button onClick={() => { setPaymentBookingId(booking.id); setPaymentCash(''); setPaymentOnline(''); }} className="flex-1 py-2 bg-slate-50 text-slate-700 border border-slate-200 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-100 active:scale-95 transition-all">Collect Cash</button>
-                                <button onClick={() => onStart(booking.id)} className={`flex-[1.5] py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${pay.canStart ? 'bg-[#00eaff] text-black shadow-sm' : 'bg-slate-100 text-slate-300'}`}>
-                                  {pay.canStart ? 'Dispatch Ride' : `Locked (${Math.round(pay.thresholdRatio * 100)}%)`}
-                                </button>
-                            </div>
-                          )}
-                          {(booking.status === BookingStatus.ACTIVE || booking.status === BookingStatus.PAUSED) && (
+                          {(booking.status === BookingStatus.ACTIVE || booking.status === BookingStatus.PAUSED || booking.status === BookingStatus.PENDING) && (
                             <div className="space-y-1.5">
-                              {booking.status === BookingStatus.ACTIVE && !isPastDue && (
+                              {(booking.status === BookingStatus.ACTIVE || booking.status === BookingStatus.PENDING) && !isPastDue && (
                                 <div className="grid grid-cols-2 gap-1.5">
                                   <button onClick={() => { setSwapType('vehicle'); setSwapBookingId(booking.id); setSwapReason(''); setNewAssetId(''); setMoveToMaint(false); setSwapStep('select'); }} className="py-2 bg-slate-50 text-slate-500 border border-slate-100 rounded-lg text-[9px] font-black uppercase flex items-center justify-center gap-1 active:scale-95 transition-all"><RefreshCcw size={10} /> <span>Scooter</span></button>
                                   <button onClick={() => { setSwapType('battery'); setSwapBookingId(booking.id); setSwapReason(''); setNewAssetId(''); setMoveToMaint(false); setSwapStep('select'); }} className="py-2 bg-emerald-50 text-emerald-600 border border-emerald-100 rounded-lg text-[9px] font-black uppercase flex items-center justify-center gap-1 active:scale-95 transition-all"><RefreshCcw size={10} /> <span>Battery</span></button>
                                 </div>
                               )}
-                              <div className="flex space-x-1.5">
-                                  {booking.status === BookingStatus.PAUSED || isPastDue ? (
-                                     <button onClick={() => { 
-                                       if(pay.canStart) setIsResumingId(booking.id);
-                                       else { setPaymentBookingId(booking.id); setPaymentCash(''); setPaymentOnline(''); }
-                                     }} className={`flex-1 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest active:scale-95 transition-all ${pay.canStart ? 'bg-emerald-600 text-white' : 'bg-amber-500 text-white'}`}>
-                                        {pay.canStart ? 'Assign & Resume' : 'Clear Dues to Dispatch'}
-                                     </button>
-                                  ) : (
-                                     <button onClick={() => { setChecklistTarget({ id: booking.id, type: 'pause' }); setSelectedChecklistIds(new Set()); setIsChecklistOpen(true); }} className="flex-1 py-2.5 bg-amber-500 text-white rounded-xl text-[10px] font-black uppercase tracking-widest active:scale-95 transition-all">Pause & Delink</button>
-                                  )}
-                                  <button onClick={() => { setChecklistTarget({ id: booking.id, type: 'return' }); setSelectedChecklistIds(new Set()); setIsChecklistOpen(true); }} className="flex-1 py-2.5 bg-[#00eaff] text-black rounded-xl text-[10px] font-black uppercase tracking-widest active:scale-95 transition-all">Return</button>
-                              </div>
+                              {booking.status !== BookingStatus.PENDING && (
+                                <div className="flex space-x-1.5">
+                                    {booking.status === BookingStatus.PAUSED || isPastDue ? (
+                                       <button onClick={() => { 
+                                         if(pay.canStart) setIsResumingId(booking.id);
+                                         else { setPaymentBookingId(booking.id); setPaymentCash(''); setPaymentOnline(''); }
+                                       }} className={`flex-1 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest active:scale-95 transition-all ${pay.canStart ? 'bg-emerald-600 text-white' : 'bg-amber-500 text-white'}`}>
+                                          {pay.canStart ? 'Assign & Resume' : 'Clear Dues to Dispatch'}
+                                       </button>
+                                    ) : (
+                                       <button onClick={() => { setChecklistTarget({ id: booking.id, type: 'pause' }); setSelectedChecklistIds(new Set()); setIsChecklistOpen(true); }} className="flex-1 py-2.5 bg-amber-500 text-white rounded-xl text-[10px] font-black uppercase tracking-widest active:scale-95 transition-all">Pause & Delink</button>
+                                    )}
+                                    <button onClick={() => { setChecklistTarget({ id: booking.id, type: 'return' }); setSelectedChecklistIds(new Set()); setIsChecklistOpen(true); }} className="flex-1 py-2.5 bg-[#00eaff] text-black rounded-xl text-[10px] font-black uppercase tracking-widest active:scale-95 transition-all">Return</button>
+                                </div>
+                              )}
+                              {booking.status === BookingStatus.PENDING && (
+                                <div className="flex gap-1.5">
+                                    <button onClick={() => onStart(booking.id)} className={`flex-[1.5] py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${pay.canStart ? 'bg-[#00eaff] text-black shadow-sm' : 'bg-slate-100 text-slate-300'}`}>
+                                      {pay.canStart ? 'Dispatch Ride' : `Locked (₹${pay.minToStart})`}
+                                    </button>
+                                </div>
+                              )}
+                              <button onClick={() => { setPaymentBookingId(booking.id); setPaymentCash(''); setPaymentOnline(''); }} className="w-full py-2 bg-slate-50 text-slate-700 border border-slate-200 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-100 active:scale-95 transition-all">Collect Cash</button>
                             </div>
                           )}
                           {isReturned && isAdmin && (
@@ -1201,11 +1244,11 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
                    {swapBookingId && (() => {
                      const b = state.bookings.find(x => x.id === swapBookingId);
                      const s = b ? getPaymentStatus(b) : null;
-                     const threshold = s?.thresholdRatio || 0.5;
                      
                      // Include checklist fine in current evaluation
                      const totalCostWithSwap = (s?.totalDue || 0) + checklistFineTotal;
-                     const minNeeded = totalCostWithSwap * threshold;
+                     const isWeekly = b?.rentalPlan === RentalPlan.WEEKLY;
+                     const minNeeded = isWeekly ? totalCostWithSwap : 4000;
                      const currentPaid = s?.paid || 0;
                      const below = currentPaid < minNeeded;
                      
@@ -1215,7 +1258,7 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
                               {below ? <Ban size={12} /> : <CheckCircle size={12} />}
                               <span>{below ? 'Threshold Breach (Will Pause)' : 'Threshold Safe (Stay Active)'}</span>
                            </div>
-                           <span className="font-black">Limit ({Math.round(threshold * 100)}%): ₹{Math.ceil(minNeeded)}</span>
+                           <span className="font-black">Limit ({isWeekly ? '100%' : 'Flat ₹4000'}): ₹{Math.ceil(minNeeded)}</span>
                         </div>
                      );
                    })()}
@@ -1401,10 +1444,10 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
                   </div>
                   <div className="flex justify-between items-center pt-2 mt-2 border-t border-white/20">
                     <span className="text-xs font-black uppercase tracking-widest text-[#00eaff]">
-                      Dispatch Limit ({selectedPlan === RentalPlan.WEEKLY ? '100%' : '50%'})
+                      Dispatch Limit ({selectedPlan === RentalPlan.WEEKLY ? '100%' : 'Flat ₹4000'})
                     </span>
                     <span className="text-lg font-black">
-                      ₹{Math.ceil(priceBreakup.total * (selectedPlan === RentalPlan.WEEKLY ? 1.0 : 0.5))}
+                      ₹{selectedPlan === RentalPlan.WEEKLY ? Math.ceil(priceBreakup.total) : 4000}
                     </span>
                   </div>
                </div>

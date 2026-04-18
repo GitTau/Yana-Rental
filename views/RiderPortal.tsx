@@ -126,7 +126,7 @@ const RiderPortal: React.FC<RiderPortalProps> = ({ state, onBook, onOnboard }) =
   };
 
   const getFinalPrice = (base: number) => {
-    return Math.round(base * (1 + state.rentalRates.gstPercentage / 100));
+    return Math.round((base * (1 + state.rentalRates.gstPercentage / 100)) / 10) * 10;
   };
 
   if (!currentRider) {

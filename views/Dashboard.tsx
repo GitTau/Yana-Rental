@@ -19,7 +19,9 @@ import {
   User,
   Zap,
   Receipt,
-  History
+  History,
+  Activity,
+  ShieldCheck
 } from 'lucide-react';
 import { YanaState, VehicleStatus, BatteryStatus, BookingStatus } from '../types';
 import { Card, Badge, Modal } from '../components/Common';
@@ -27,6 +29,7 @@ import { Card, Badge, Modal } from '../components/Common';
 const Dashboard: React.FC<{ state: YanaState }> = ({ state }) => {
   const [daysLookback, setDaysLookback] = useState(30);
   const [drillDownCategory, setDrillDownCategory] = useState<'live' | 'paused' | 'revenue' | null>(null);
+  const [logTimeframe, setLogTimeframe] = useState<'today' | 'week'>('today');
   const isGlobal = state.activeStoreId === 'all';
   
   const filteredVehicles = isGlobal ? state.vehicles : state.vehicles.filter(v => v.storeId === state.activeStoreId);
@@ -50,9 +53,22 @@ const Dashboard: React.FC<{ state: YanaState }> = ({ state }) => {
 
     const liveBookings = windowBookings.filter(b => b.status === BookingStatus.ACTIVE).length;
     const pausedBookings = windowBookings.filter(b => b.status === BookingStatus.PAUSED).length;
-    const totalRevenue = windowBookings.reduce((sum, b) => sum + Number(b.amountPaid || 0), 0);
+    const totalRevenue = windowBookings.reduce((sum, b) => {
+      const paid = Number(b.amountPaid || 0);
+      const deposit = Number(b.depositAmount || 0);
+      const depositCollected = Math.min(paid, deposit);
+      const rentalCollected = paid - depositCollected;
+      return sum + rentalCollected;
+    }, 0);
 
-    return { liveBookings, pausedBookings, totalRevenue, totalInWindow: windowBookings.length, windowBookings };
+    const totalSecurityDeposits = globalBookings.filter(b => [BookingStatus.ACTIVE, BookingStatus.PAUSED, BookingStatus.PENDING].includes(b.status)).reduce((sum, b) => {
+      const paid = Number(b.amountPaid || 0);
+      const deposit = Number(b.depositAmount || 0);
+      const depositCollected = Math.min(paid, deposit);
+      return sum + depositCollected;
+    }, 0);
+
+    return { liveBookings, pausedBookings, totalRevenue, totalSecurityDeposits, totalInWindow: windowBookings.length, windowBookings };
   }, [globalBookings, daysLookback, cutOffTime]);
 
   // 3. Drill Down Data
@@ -67,7 +83,13 @@ const Dashboard: React.FC<{ state: YanaState }> = ({ state }) => {
       case 'paused':
         return baseList.filter(b => b.status === BookingStatus.PAUSED);
       case 'revenue':
-        return baseList.filter(b => Number(b.amountPaid || 0) > 0);
+        return baseList.filter(b => {
+          const paid = Number(b.amountPaid || 0);
+          const deposit = Number(b.depositAmount || 0);
+          const depositCollected = Math.min(paid, deposit);
+          const rentalCollected = paid - depositCollected;
+          return rentalCollected > 0;
+        });
       default:
         return [];
     }
@@ -155,7 +177,7 @@ const Dashboard: React.FC<{ state: YanaState }> = ({ state }) => {
               </div>
            </div>
 
-           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               <AnalyzerStat 
                 label="Live Dispatch" 
                 value={analyzerMetrics.liveBookings} 
@@ -179,6 +201,13 @@ const Dashboard: React.FC<{ state: YanaState }> = ({ state }) => {
                 color="text-emerald-400" 
                 desc="Cash collected in window"
                 onClick={() => setDrillDownCategory('revenue')}
+              />
+              <AnalyzerStat 
+                label="Security Deposits Held" 
+                value={`₹${analyzerMetrics.totalSecurityDeposits.toLocaleString()}`} 
+                icon={<ShieldCheck size={24} />} 
+                color="text-blue-400" 
+                desc="Deposits currently held"
               />
            </div>
         </div>
@@ -232,12 +261,18 @@ const Dashboard: React.FC<{ state: YanaState }> = ({ state }) => {
                         </div>
                      </div>
                      <div className="text-right">
-                        {drillDownCategory === 'revenue' ? (
-                          <div className="flex flex-col items-end">
-                             <p className="text-sm font-black text-emerald-600">₹{b.amountPaid}</p>
-                             <p className="text-[8px] text-slate-400 font-bold">{new Date(b.createdAt).toLocaleDateString()}</p>
-                          </div>
-                        ) : (
+                        {drillDownCategory === 'revenue' ? (() => {
+                          const paid = Number(b.amountPaid || 0);
+                          const deposit = Number(b.depositAmount || 0);
+                          const depositCollected = Math.min(paid, deposit);
+                          const rentalCollected = paid - depositCollected;
+                          return (
+                            <div className="flex flex-col items-end">
+                               <p className="text-sm font-black text-emerald-600">₹{rentalCollected}</p>
+                               <p className="text-[8px] text-slate-400 font-bold">{new Date(b.createdAt).toLocaleDateString()}</p>
+                            </div>
+                          );
+                        })() : (
                           <div className="flex items-center gap-1.5">
                              <Clock size={10} className="text-slate-300" />
                              <span className="text-[9px] font-black text-slate-500 uppercase">{new Date(b.createdAt).toLocaleDateString()}</span>
@@ -319,25 +354,73 @@ const Dashboard: React.FC<{ state: YanaState }> = ({ state }) => {
                 </div>
               </Card>
 
-              <Card title="Recent Network Logs" className="border-slate-200">
-                <div className="space-y-6">
-                  {state.logs.filter(l => isGlobal || l.storeId === state.activeStoreId).slice(0, 5).map(log => {
-                    const logStore = state.stores.find(s => s.id === log.storeId);
-                    return (
-                      <div key={log.id} className="relative pl-6 pb-6 border-l-2 border-slate-100 last:border-0 last:pb-0">
-                        <div className="absolute left-[-9px] top-0 w-4 h-4 bg-white border-2 border-blue-500 rounded-full" />
-                        <div className="flex justify-between items-start">
-                          <div className="flex items-center gap-2">
-                             <Clock size={10} className="text-slate-400" />
-                             <p className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">{new Date(log.timestamp).toLocaleTimeString()}</p>
+              <Card title="Live Network Activity" className="border-slate-200">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex gap-2 bg-slate-100 p-1 rounded-xl border border-slate-200">
+                    <button 
+                      onClick={() => setLogTimeframe('today')}
+                      className={`px-3 py-1.5 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${logTimeframe === 'today' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                    >
+                      Today
+                    </button>
+                    <button 
+                      onClick={() => setLogTimeframe('week')}
+                      className={`px-3 py-1.5 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${logTimeframe === 'week' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                    >
+                      This Week
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
+                  {(() => {
+                    const startOfToday = new Date(new Date().setHours(0,0,0,0)).getTime();
+                    const startOfWeek = startOfToday - 6 * 24 * 60 * 60 * 1000;
+                    
+                    const filteredLogs = state.logs
+                      .filter(l => isGlobal || l.storeId === state.activeStoreId)
+                      .filter(l => {
+                        if (logTimeframe === 'today') return l.timestamp >= startOfToday;
+                        if (logTimeframe === 'week') return l.timestamp >= startOfWeek;
+                        return true;
+                      })
+                      .sort((a, b) => b.timestamp - a.timestamp);
+
+                    if (filteredLogs.length === 0) {
+                      return <div className="text-center py-8 text-slate-400 text-xs font-bold">No activity recorded for this timeframe.</div>;
+                    }
+
+                    return filteredLogs.map((log, index) => {
+                      const logStore = state.stores.find(s => s.id === log.storeId);
+                      const logDate = new Date(log.timestamp);
+                      const isRecent = index === 0 && logTimeframe === 'today';
+                      
+                      return (
+                        <div key={log.id} className={`p-3 rounded-2xl border flex gap-3 items-start transition-all group ${isRecent ? 'bg-blue-50 border-blue-100 shadow-sm' : 'bg-slate-50 border-slate-100 hover:bg-white hover:shadow-sm'}`}>
+                          <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 mt-1 ${isRecent ? 'bg-blue-500 text-white shadow-md shadow-blue-500/20 animate-pulse' : 'bg-blue-100 text-blue-600'}`}>
+                            <Activity size={14} />
                           </div>
-                          {isGlobal && logStore && <span className="text-[8px] bg-slate-900 px-2 py-0.5 rounded-full font-black text-[#00eaff] uppercase tracking-tighter">{logStore.name.split(' ')[2]}</span>}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex justify-between items-start mb-1">
+                              <p className={`text-xs font-bold truncate pr-2 ${isRecent ? 'text-blue-900' : 'text-slate-900'}`}>{log.message}</p>
+                              <div className="text-right shrink-0">
+                                <p className={`text-[9px] font-black uppercase tracking-tighter ${isRecent ? 'text-blue-500' : 'text-slate-400'}`}>{logDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</p>
+                                {logTimeframe === 'week' && <p className={`text-[9px] font-black uppercase tracking-tighter ${isRecent ? 'text-blue-400' : 'text-slate-400'}`}>{logDate.toLocaleDateString([], {month: 'short', day: 'numeric'})}</p>}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2 mt-1.5">
+                              {logStore && (
+                                <span className={`text-[8px] px-2 py-0.5 rounded-full font-black uppercase tracking-tighter truncate max-w-[100px] ${isRecent ? 'bg-blue-200 text-blue-800' : 'bg-slate-900 text-[#00eaff]'}`}>
+                                  {logStore.name.replace('YANA Zap Point - ', '')}
+                                </span>
+                              )}
+                              <span className={`text-[9px] italic truncate ${isRecent ? 'text-blue-600/70' : 'text-slate-500'}`}>"{log.reason}"</span>
+                            </div>
+                          </div>
                         </div>
-                        <p className="text-xs font-bold text-slate-800 mt-1.5 leading-tight">{log.message}</p>
-                        <p className="text-[10px] text-slate-500 italic mt-1 font-medium">"{log.reason}"</p>
-                      </div>
-                    );
-                  })}
+                      );
+                    });
+                  })()}
                 </div>
               </Card>
            </div>
