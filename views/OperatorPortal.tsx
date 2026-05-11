@@ -44,7 +44,8 @@ import {
   ShieldCheck,
   UserCheck,
   TicketCheck,
-  Timer
+  Timer,
+  TrendingUp
 } from 'lucide-react';
 import { 
   YanaState, 
@@ -354,19 +355,29 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
   const overviewStats = useMemo(() => {
     const totalBookings = storeBookings.length;
     const idleVehicles = storeVehicles.filter(v => v.status === VehicleStatus.AVAILABLE).length;
-    const vehiclesOnRent = storeBookings.filter(b => [BookingStatus.ACTIVE, BookingStatus.PAUSED].includes(b.status)).length;
+    
+    const nowTs = Date.now();
+    const currentDate = new Date(nowTs);
+    const startOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1).getTime();
+    
+    // Filter bookings relevant for this month's goals
+    const currentMonthBookings = storeBookings.filter(b => b.createdAt >= startOfMonth);
+    const rentalsThisMonth = currentMonthBookings.length;
+    
     const activeStore = state.stores.find(s => s.id === state.activeStoreId);
     const target = activeStore?.targetRentals || 0;
     const pendingPaymentsCount = storeBookings.filter(b => getPaymentStatus(b).isPendingCollection).length;
     
-    // Calculate Revenue Realised and Security Deposits
-    const revenueRealised = storeBookings.reduce((sum, b) => {
+    // Calculate Revenue Realised (Resets Monthly)
+    const revenueRealised = currentMonthBookings.reduce((sum, b) => {
       const paid = Number(b.amountPaid || 0);
       const deposit = Number(b.depositAmount || 0);
       const depositCollected = Math.min(paid, deposit);
       const rentalCollected = paid - depositCollected;
       return sum + rentalCollected;
     }, 0);
+
+    const bonusEarnings = revenueRealised * 0.03; // 3% of revenue realised
 
     const securityDepositsHeld = storeBookings.filter(b => [BookingStatus.ACTIVE, BookingStatus.PAUSED, BookingStatus.PENDING].includes(b.status)).reduce((sum, b) => {
       const paid = Number(b.amountPaid || 0);
@@ -375,13 +386,12 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
       return sum + depositCollected;
     }, 0);
 
-    const now = Date.now();
     const overdueBookings = storeBookings.filter(b => 
       [BookingStatus.ACTIVE, BookingStatus.PAUSED].includes(b.status) && 
-      b.expectedEndDate && b.expectedEndDate < now
+      b.expectedEndDate && b.expectedEndDate < nowTs
     );
     const totalOverdueDaysForFine = overdueBookings.reduce((sum, b) => {
-      const diff = now - (b.expectedEndDate || now);
+      const diff = nowTs - (b.expectedEndDate || nowTs);
       const days = Math.ceil(diff / (1000 * 60 * 60 * 24));
       return sum + (days > 1 ? days : 0);
     }, 0);
@@ -389,12 +399,13 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
     return { 
       totalBookings, 
       idleVehicles, 
-      vehiclesOnRent, 
+      rentalsThisMonth, 
       target, 
       pendingPaymentsCount, 
       overdueCount: overdueBookings.length, 
       totalOverdueDays: totalOverdueDaysForFine,
       revenueRealised,
+      bonusEarnings,
       securityDepositsHeld
     };
   }, [storeBookings, storeVehicles, state.activeStoreId, state.stores]);
@@ -461,16 +472,16 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
                     <div className="flex justify-between items-center mb-6">
                        <div>
                           <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 flex items-center gap-2">
-                             <Target size={14} className="text-blue-500" /> Rental Goal Progress
+                             <Target size={14} className="text-blue-500" /> Rental Goal Progress (This Month)
                           </p>
-                          <h4 className="text-2xl font-black text-slate-900">{overviewStats.vehiclesOnRent} <span className="text-sm font-bold text-slate-400">/ {overviewStats.target} Active</span></h4>
+                          <h4 className="text-2xl font-black text-slate-900">{overviewStats.rentalsThisMonth} <span className="text-sm font-bold text-slate-400">/ {overviewStats.target} New Rentals</span></h4>
                        </div>
                        <div className="bg-slate-900 text-[#00eaff] px-4 py-2 rounded-xl text-lg font-black italic">
-                          {overviewStats.target > 0 ? Math.round((overviewStats.vehiclesOnRent / overviewStats.target) * 100) : 0}%
+                          {overviewStats.target > 0 ? Math.round((overviewStats.rentalsThisMonth / overviewStats.target) * 100) : 0}%
                        </div>
                     </div>
                     <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden flex">
-                       <div className="h-full bg-blue-500 transition-all duration-700" style={{ width: `${Math.min(100, (overviewStats.vehiclesOnRent / overviewStats.target) * 100)}%` }} />
+                       <div className="h-full bg-blue-500 transition-all duration-700" style={{ width: `${Math.min(100, (overviewStats.rentalsThisMonth / overviewStats.target) * 100)}%` }} />
                     </div>
                     <p className="text-[9px] font-bold text-slate-400 mt-4 uppercase tracking-tighter italic">* Target defined by Admin Console</p>
                   </Card>
@@ -511,20 +522,32 @@ const OperatorPortal: React.FC<OperatorPortalProps> = ({
                </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 lg:gap-6">
-               <KPIBox 
-                 label="Revenue Realised" 
-                 value={`₹${overviewStats.revenueRealised.toLocaleString()}`} 
-                 icon={<IndianRupee size={20} />} 
-                 color="text-emerald-600" 
-                 bg="bg-emerald-50" 
-               />
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 lg:gap-6">
+               <div className="flex flex-col gap-4">
+                 <KPIBox 
+                   label="Revenue Realised (This Mth)" 
+                   value={`₹${overviewStats.revenueRealised.toLocaleString()}`} 
+                   icon={<IndianRupee size={20} />} 
+                   color="text-emerald-600" 
+                   bg="bg-emerald-50" 
+                   onClick={() => setActiveTab('payments')}
+                 />
+                 <KPIBox 
+                   label="Bonus Earnings (3%)" 
+                   value={`₹${overviewStats.bonusEarnings.toLocaleString(undefined, { maximumFractionDigits: 0 })}`} 
+                   icon={<TrendingUp size={20} />} 
+                   color="text-fuchsia-600" 
+                   bg="bg-fuchsia-50" 
+                   onClick={() => setActiveTab('payments')}
+                 />
+               </div>
                <KPIBox 
                  label="Security Deposits Held" 
                  value={`₹${overviewStats.securityDepositsHeld.toLocaleString()}`} 
                  icon={<ShieldCheck size={20} />} 
                  color="text-blue-600" 
                  bg="bg-blue-50" 
+                 onClick={() => setActiveTab('payments')}
                />
             </div>
           </div>

@@ -200,16 +200,7 @@ export const useYanaData = () => {
   const fetchData = useCallback(async () => {
     setIsLoading(true);
     try {
-      const [
-        { data: stores },
-        { data: vehicles },
-        { data: batteries },
-        { data: customers },
-        { data: bookings },
-        { data: jobs },
-        { data: logs },
-        { data: config }
-      ] = await Promise.all([
+      const results = await Promise.all([
         supabase.from('stores').select('*'),
         supabase.from('vehicles').select('*'),
         supabase.from('batteries').select('*'),
@@ -219,6 +210,22 @@ export const useYanaData = () => {
         supabase.from('audit_logs').select('*').order('timestamp', { ascending: false }),
         supabase.from('global_config').select('*').limit(1).maybeSingle()
       ]);
+
+      const [
+        { data: stores, error: e1 },
+        { data: vehicles, error: e2 },
+        { data: batteries, error: e3 },
+        { data: customers, error: e4 },
+        { data: bookings, error: e5 },
+        { data: jobs, error: e6 },
+        { data: logs, error: e7 },
+        { data: config, error: e8 }
+      ] = results;
+
+      const anyError = e1 || e2 || e3 || e4 || e5 || e6 || e7 || e8;
+      if (anyError) {
+        console.error("Supabase fetch errors:", [e1, e2, e3, e4, e5, e6, e7, e8].filter(Boolean));
+      }
 
       setState(prev => ({
         ...prev,

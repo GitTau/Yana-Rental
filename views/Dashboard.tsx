@@ -21,14 +21,16 @@ import {
   Receipt,
   History,
   Activity,
-  ShieldCheck
+  ShieldCheck,
+  RefreshCcw,
+  Users
 } from 'lucide-react';
 import { YanaState, VehicleStatus, BatteryStatus, BookingStatus } from '../types';
 import { Card, Badge, Modal } from '../components/Common';
 
 const Dashboard: React.FC<{ state: YanaState }> = ({ state }) => {
   const [daysLookback, setDaysLookback] = useState(30);
-  const [drillDownCategory, setDrillDownCategory] = useState<'live' | 'paused' | 'revenue' | null>(null);
+  const [drillDownCategory, setDrillDownCategory] = useState<'live' | 'paused' | 'revenue' | 'security' | null>(null);
   const [logTimeframe, setLogTimeframe] = useState<'today' | 'week'>('today');
   const isGlobal = state.activeStoreId === 'all';
   
@@ -68,7 +70,28 @@ const Dashboard: React.FC<{ state: YanaState }> = ({ state }) => {
       return sum + depositCollected;
     }, 0);
 
-    return { liveBookings, pausedBookings, totalRevenue, totalSecurityDeposits, totalInWindow: windowBookings.length, windowBookings };
+    const depositingRidersCount = new Set(globalBookings.filter(b => Math.min(Number(b.amountPaid || 0), Number(b.depositAmount || 0)) > 0).map(b => b.customerId)).size;
+    const refundedRidersCount = new Set(globalBookings.filter(b => b.status === BookingStatus.COMPLETED && b.isSettled && Math.min(Number(b.amountPaid || 0), Number(b.depositAmount || 0)) > 0).map(b => b.customerId)).size;
+    const riderChurnPercentage = depositingRidersCount === 0 ? 0 : (refundedRidersCount / depositingRidersCount) * 100;
+
+    const activeRidersInWindowCount = new Set(globalBookings.filter(b => {
+      const inWindow = b.createdAt >= cutOffTime || (b.status !== BookingStatus.COMPLETED && b.status !== BookingStatus.CANCELLED) || (b.completedAt && b.completedAt >= cutOffTime);
+      const paid = Number(b.amountPaid || 0);
+      const deposit = Number(b.depositAmount || 0);
+      const rentalCollected = paid - Math.min(paid, deposit);
+      return inWindow && rentalCollected > 0;
+    }).map(b => b.customerId)).size;
+
+    return { 
+      liveBookings, 
+      pausedBookings, 
+      totalRevenue, 
+      totalSecurityDeposits, 
+      totalInWindow: windowBookings.length, 
+      windowBookings,
+      riderChurnPercentage,
+      activeRidersInWindowCount
+    };
   }, [globalBookings, daysLookback, cutOffTime]);
 
   // 3. Drill Down Data
@@ -89,6 +112,14 @@ const Dashboard: React.FC<{ state: YanaState }> = ({ state }) => {
           const depositCollected = Math.min(paid, deposit);
           const rentalCollected = paid - depositCollected;
           return rentalCollected > 0;
+        });
+      case 'security':
+        return globalBookings.filter(b => {
+          if (![BookingStatus.ACTIVE, BookingStatus.PAUSED, BookingStatus.PENDING].includes(b.status)) return false;
+          const paid = Number(b.amountPaid || 0);
+          const deposit = Number(b.depositAmount || 0);
+          const depositCollected = Math.min(paid, deposit);
+          return depositCollected > 0;
         });
       default:
         return [];
@@ -208,8 +239,54 @@ const Dashboard: React.FC<{ state: YanaState }> = ({ state }) => {
                 icon={<ShieldCheck size={24} />} 
                 color="text-blue-400" 
                 desc="Deposits currently held"
+                onClick={() => setDrillDownCategory('security')}
               />
            </div>
+
+           {/* Efficiency & Utilization Metrics */}
+           {(() => {
+              const vehicleUtilization = filteredVehicles.length === 0 ? 0 : (filteredVehicles.filter(v => v.status === VehicleStatus.IN_USE).length / filteredVehicles.length) * 100;
+              const activeRidersUtilization = filteredVehicles.length === 0 ? 0 : (analyzerMetrics.activeRidersInWindowCount / filteredVehicles.length) * 100;
+              
+              const vehiclesOutOnRoad = filteredVehicles.filter(v => v.status === VehicleStatus.IN_USE).length;
+              const dailyAvgRevenue = analyzerMetrics.totalRevenue / daysLookback;
+              const avgDailyRevPerVehicle = filteredVehicles.length === 0 ? 0 : dailyAvgRevenue / filteredVehicles.length;
+              const vehicleUtilizationRatio = filteredVehicles.length === 0 ? 0 : vehiclesOutOnRoad / filteredVehicles.length;
+              const revenueCollectionEfficiency = vehicleUtilizationRatio === 0 ? 0 : (avgDailyRevPerVehicle / (vehicleUtilizationRatio * 200)) * 100;
+
+              return (
+                 <div className="pt-6 mt-6 border-t border-white/10 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                    <AnalyzerStat 
+                       label="Vehicle Utilization" 
+                       value={`${isFinite(vehicleUtilization) ? vehicleUtilization.toFixed(1) : 0}%`} 
+                       icon={<Activity size={24} />} 
+                       color={vehicleUtilization >= 100 ? "text-emerald-400" : vehicleUtilization >= 70 ? "text-[#00eaff]" : "text-amber-400"} 
+                       desc="Deployed vs Total Fleet"
+                    />
+                    <AnalyzerStat 
+                       label="Rev. Collection Efficiency" 
+                       value={`${isFinite(revenueCollectionEfficiency) ? revenueCollectionEfficiency.toFixed(1) : 0}%`} 
+                       icon={<Receipt size={24} />} 
+                       color={revenueCollectionEfficiency >= 100 ? "text-emerald-400" : "text-amber-400"} 
+                       desc="vs. target ₹200/day per active"
+                    />
+                    <AnalyzerStat 
+                       label={`${daysLookback <= 7 ? 'Weekly' : daysLookback <= 30 ? 'Monthly' : 'Period'} Active Riders`} 
+                       value={`${isFinite(activeRidersUtilization) ? activeRidersUtilization.toFixed(1) : 0}%`} 
+                       icon={<Users size={24} />} 
+                       color={activeRidersUtilization >= 100 ? "text-emerald-400" : "text-amber-400"} 
+                       desc="Paying distinct users / Fleet"
+                    />
+                    <AnalyzerStat 
+                       label="Rider Churn Rate" 
+                       value={`${isFinite(analyzerMetrics.riderChurnPercentage) ? analyzerMetrics.riderChurnPercentage.toFixed(1) : 0}%`} 
+                       icon={<RefreshCcw size={24} />} 
+                       color={analyzerMetrics.riderChurnPercentage > 20 ? "text-rose-400" : "text-emerald-400"} 
+                       desc="Refunded / Total Deposited"
+                    />
+                 </div>
+              );
+           })()}
         </div>
 
         {/* Background Visuals */}
@@ -225,6 +302,7 @@ const Dashboard: React.FC<{ state: YanaState }> = ({ state }) => {
         title={
           drillDownCategory === 'live' ? 'Live Dispatch Registry' :
           drillDownCategory === 'paused' ? 'Paused Requisitions Log' :
+          drillDownCategory === 'security' ? 'Security Deposits Ledger' :
           'Revenue Collection Ledger'
         }
       >
@@ -269,6 +347,16 @@ const Dashboard: React.FC<{ state: YanaState }> = ({ state }) => {
                           return (
                             <div className="flex flex-col items-end">
                                <p className="text-sm font-black text-emerald-600">₹{rentalCollected}</p>
+                               <p className="text-[8px] text-slate-400 font-bold">{new Date(b.createdAt).toLocaleDateString()}</p>
+                            </div>
+                          );
+                        })() : drillDownCategory === 'security' ? (() => {
+                          const paid = Number(b.amountPaid || 0);
+                          const deposit = Number(b.depositAmount || 0);
+                          const depositCollected = Math.min(paid, deposit);
+                          return (
+                            <div className="flex flex-col items-end">
+                               <p className="text-sm font-black text-blue-600">₹{depositCollected}</p>
                                <p className="text-[8px] text-slate-400 font-bold">{new Date(b.createdAt).toLocaleDateString()}</p>
                             </div>
                           );
